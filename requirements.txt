@@ -1,11 +1,25 @@
-streamlit
-sqlalchemy
-psycopg2-binary
-python-dotenv
-pandas
-requests
-plotly
-geopandas
-shapely
-streamlit-folium
-folium
+# Web framework
+streamlit==1.28.0
+
+# Data handling
+pandas==2.1.1
+numpy==1.27.0
+
+# Database
+SQLAlchemy==2.1.2
+psycopg2-binary==2.9.7
+
+# Data visualization
+plotly==5.18.0
+
+# Optional: for form handling / utils
+openpyxl==3.1.2
+
+# For caching / improved performance (Streamlit utils)
+cachetools==5.4.0
+
+# For environment variable support (if needed)
+python-dotenv==1.0.1
+
+# If you have templates / file handling
+Jinja2==3.1.2
