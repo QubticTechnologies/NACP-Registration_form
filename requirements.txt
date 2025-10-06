@@ -1,13 +1,13 @@
 # Web framework
 streamlit==1.28.0
 
-# Data handling
-pandas==2.2.3
-numpy==1.26.4
+streamlit==1.28.0
+pandas==2.1.1
+SQLAlchemy==2.1.2
+numpy==1.25.3
+
 
 # Database
-SQLAlchemy==2.1.2
-psycopg2-binary==2.9.7
 
 # Data visualization
 plotly==5.18.0
