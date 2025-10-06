@@ -1,11 +1,2 @@
-streamlit==1.28.0
-pandas==2.2.3
-SQLAlchemy==2.1.2
-numpy==1.26.4
-python-dateutil==2.8.2
-pytz==2025.7
-tzdata==2025.7
-altair==5.0.1
-plotly==5.18.0
-matplotlib==3.8.0
-Pillow==10.1.0
+python-3.11.9
+
