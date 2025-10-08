@@ -39,17 +39,17 @@ def admin_dashboard():
                     if st.form_submit_button(f"Approve Selected {entity}") and selected_ids:
                         bulk_approve(table_name, selected_ids)
                         st.success(f"Approved {len(selected_ids)} {entity.lower()}.")
-                        st.experimental_rerun()
+                        st.rerun()
                 with col2:
                     if st.form_submit_button(f"Reject Selected {entity}") and selected_ids:
                         bulk_reject(table_name, selected_ids)
                         st.success(f"Rejected {len(selected_ids)} {entity.lower()}.")
-                        st.experimental_rerun()
+                        st.rerun()
                 with col3:
                     if st.form_submit_button(f"Delete Selected {entity}") and selected_ids:
                         bulk_delete(table_name, selected_ids)
                         st.success(f"Deleted {len(selected_ids)} {entity.lower()}.")
-                        st.experimental_rerun()
+                        st.rerun()
 
     # ---------------- General Information ----------------
     elif tab == "General Information":

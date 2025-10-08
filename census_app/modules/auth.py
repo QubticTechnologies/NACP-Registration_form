@@ -1,12 +1,11 @@
 # census_app/modules/auth.py
 
 import streamlit as st
-import bcrypt
-from census_app.modules.user_utils import register_user_logic, login_user_logic
-from census_app.modules.survey_sidebar import survey_sidebar
-from census_app.modules.holder_info import show_holder_dashboard, get_holder_name
 from sqlalchemy import text
 from census_app.db import engine
+from census_app.modules.user_utils import register_user_logic, login_user_logic
+from census_app.modules.survey_sidebar import survey_sidebar
+from census_app.modules.holder_info import show_holder_dashboard
 from census_app.config import TOTAL_SURVEY_SECTIONS
 import pandas as pd
 
@@ -78,13 +77,20 @@ def register_user():
             st.error("⚠️ All fields are required.")
             return
 
-        hashed_pw = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
-        success, msg = register_user_logic(username, email, hashed_pw, role)
+        # Register user (password hashing happens inside register_user_logic)
+        user_id, msg = register_user_logic(username, email, password, role)
 
-        if success:
+        if user_id:
             st.success(msg)
-            if role.lower() == "holder":
-                create_holder_for_user(user_id=success, username=username)
+            # Store user in session_state immediately
+            st.session_state["user"] = {
+                "id": user_id,
+                "username": username,
+                "role": role
+            }
+
+            # Redirect to dashboard; holder location setup deferred
+            st.session_state["page"] = "holder_dashboard" if role.lower() == "holder" else "landing"
             st.rerun()
         else:
             st.error(msg)
@@ -114,15 +120,8 @@ def login_user(role=None):
                 "role": session_info["user_role"]
             }
 
-            if session_info["user_role"].lower() == "holder":
-                create_holder_for_user(session_info["user_id"], session_info["username"])
-
-            if session_info["user_role"] == "Holder":
-                st.session_state["page"] = "holder_dashboard"
-            elif session_info["user_role"] == "Agent":
-                st.session_state["page"] = "agent_dashboard"
-            else:
-                st.session_state["page"] = "landing"
+            # Redirect to holder dashboard or agent dashboard
+            st.session_state["page"] = "holder_dashboard" if session_info["user_role"].lower() == "holder" else "agent_dashboard"
 
             st.success(msg)
             st.rerun()
@@ -154,17 +153,11 @@ def auth_sidebar():
         user_id = st.session_state["user"]["id"]
 
         if user_role.lower() == "holder":
-            # Create holder safely and get holder_id
+            # Only now call create_holder_for_user on first login
             holder_id = create_holder_for_user(user_id, st.session_state["user"]["username"])
-
-            # Render unified holder dashboard (progress + Section 2 form)
             show_holder_dashboard(holder_id)
-
-            # Render survey sidebar for holder
             survey_sidebar(holder_id=holder_id)
-
         else:
-            # Agents or other roles
             survey_sidebar(holder_id=None)
 
         st.write(f"👤 Logged in as: **{st.session_state['user']['username']}** ({user_role})")
