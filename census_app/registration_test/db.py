@@ -1,32 +1,36 @@
-from sqlalchemy import create_engine, text
+# db.py
 import os
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
+from dotenv import load_dotenv
+import time
 
-# -------------------------------
-# Database Configuration
-# -------------------------------
-DB_USER = os.getenv("LOCAL_DB_USER", "postgres")
-DB_PASSWORD = os.getenv("LOCAL_DB_PASSWORD", "sherline10152")
-DB_HOST = os.getenv("LOCAL_DB_HOST", "localhost")
-DB_PORT = os.getenv("LOCAL_DB_PORT", "5432")
-DB_NAME = os.getenv("LOCAL_DB_NAME", "agri_census")
+load_dotenv()  # load .env file
 
-# Build Connection URL
-DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DB_USER = os.getenv("DB_USER", "agri_data_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "lo7GjOG52LrKPTlk2wDEnNgq1965WG0Q")
+DB_HOST = os.getenv("DB_HOST", "dpg-d3jgpvc9c44c73bs8m60-a.oregon-postgres.render.com")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "agri_data")
 
-# Create Engine
-engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# -------------------------------
-# Test Database Connection
-# -------------------------------
-def test_connection():
-    try:
-        with engine.begin() as conn:
-            version = conn.execute(text("SELECT version();")).scalar()
-            print(f"✅ Connected to PostgreSQL: {version}")
-    except Exception as e:
-        print(f"❌ [DB] Connection failed: {e}")
+engine = None
 
-# Run test when loaded locally
-if __name__ == "__main__":
-    test_connection()
+def connect_with_retries(retries=5, delay=3):
+    global engine
+    attempt = 0
+    while attempt < retries:
+        try:
+            engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+            # simple test
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            print("✅ Database connected!")
+            return engine
+        except OperationalError as e:
+            print(f"⚠️ Database connection failed (attempt {attempt+1}/{retries}): {e}")
+            time.sleep(delay)
+            attempt += 1
+    print("❌ Could not connect to database after retries.")
+    return None

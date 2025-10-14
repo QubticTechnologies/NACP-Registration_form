@@ -1,106 +1,106 @@
 import streamlit as st
-from sqlalchemy import text
-from census_app.db import engine
+from census_app.modules.holder_information_form import holder_information_form
+from census_app.modules.survey_helpers import show_regular_survey_section, get_completed_sections
+from census_app.modules.holding_labour_form import holding_labour_form
+from census_app.modules.household_information import household_information
 
-# --------------------------
-# Helper to safely save data
-# --------------------------
-def save_response(holder_id, section, data):
-    """Insert or update survey responses with stability."""
-    try:
-        with engine.begin() as conn:
-            for key, val in data.items():
-                conn.execute(
-                    text("""
-                        INSERT INTO survey_responses (holder_id, section, question_key, response_value)
-                        VALUES (:hid, :section, :key, :val)
-                        ON CONFLICT (holder_id, section, question_key)
-                        DO UPDATE SET response_value = EXCLUDED.response_value
-                    """),
-                    {"hid": holder_id, "section": section, "key": key, "val": val}
-                )
-        st.session_state[f"{section}_saved"] = True
-        st.success(f"{section} saved successfully!")
-    except Exception as e:
-        st.error(f"Error saving {section}: {e}")
+# ---------------- Survey Sections ----------------
+SURVEY_SECTIONS = {
+    1: {"label": "Holder Information", "func": holder_information_form, "needs_holder_id": False},
+    2: {"label": "Holding Labour Form", "func": holding_labour_form, "needs_holder_id": True},
+    3: {"label": "Household Information", "func": household_information, "needs_holder_id": True},
+}
 
+# ---------------- Survey Sidebar ----------------
+def survey_sidebar(holder_id=None, prefix=""):
+    """Render the survey sidebar with progress and section buttons."""
 
-# --------------------------
-# Section 1: Holder Info
-# --------------------------
-def holder_information_form(holder_id):
-    st.subheader("Section 1: Holder Information")
+    # Prevent duplicate sidebar rendering
+    state_key_rendered = f"{prefix}_rendered"
+    if st.session_state.get(state_key_rendered):
+        return
+    st.session_state[state_key_rendered] = True
 
-    with st.form(key=f"holder_info_form_{holder_id}", clear_on_submit=False):
-        name = st.text_input("Full Name of Holder")
-        birth_date = st.date_input("Date of Birth", value=None, min_value=None, max_value=None)
-        gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-        education = st.selectbox("Highest Level of Education", ["None", "Primary", "Secondary", "Tertiary"])
-        years_farming = st.number_input("Years engaged in farming", min_value=0)
+    st.sidebar.markdown("## Survey Progress")
 
-        submitted = st.form_submit_button("💾 Save Section 1")
-        if submitted:
-            data = {
-                "Name": name,
-                "BirthDate": str(birth_date),
-                "Gender": gender,
-                "Education": education,
-                "YearsFarming": years_farming,
-            }
-            save_response(holder_id, "section_1", data)
-            st.toast("Section 1 saved ✅")
+    if holder_id is None:
+        st.sidebar.info("Survey progress available only for a selected holder.")
+        return
 
-
-# --------------------------
-# Section 2: Holding Labour
-# --------------------------
-def holding_labour_form(holder_id):
-    st.subheader("Section 2: Holding Labour")
-
-    with st.form(key=f"holding_labour_form_{holder_id}", clear_on_submit=False):
-        st.markdown("**From August 1, 2024 to July 31, 2025**")
-
-        perm_male = st.number_input("Permanent Male Workers", min_value=0)
-        perm_female = st.number_input("Permanent Female Workers", min_value=0)
-        temp_male = st.number_input("Temporary Male Workers", min_value=0)
-        temp_female = st.number_input("Temporary Female Workers", min_value=0)
-        non_bahamian = st.number_input("Number of Non-Bahamian Workers", min_value=0)
-        work_permit = st.selectbox("Did any workers have work permits?", ["Yes", "No", "Not Applicable"])
-        volunteer = st.selectbox("Any volunteer (unpaid) workers?", ["Yes", "No", "Not Applicable"])
-        contracted = st.selectbox("Used agricultural contracted services?", ["Yes", "No", "Not Applicable"])
-
-        submitted = st.form_submit_button("💾 Save Section 2")
-        if submitted:
-            data = {
-                "PermanentMale": perm_male,
-                "PermanentFemale": perm_female,
-                "TemporaryMale": temp_male,
-                "TemporaryFemale": temp_female,
-                "NonBahamian": non_bahamian,
-                "WorkPermit": work_permit,
-                "Volunteer": volunteer,
-                "ContractedServices": contracted,
-            }
-            save_response(holder_id, "section_2", data)
-            st.toast("Section 2 saved ✅")
-
-
-# --------------------------
-# Sidebar Navigation
-# --------------------------
-def survey_sidebar(holder_id):
-    st.sidebar.title("Survey Navigation")
-
-    section = st.sidebar.radio(
-        "Go to section:",
-        ["Section 1: Holder Information", "Section 2: Holding Labour"],
-        key=f"section_nav_{holder_id}"
+    # ---------------- Holder Info Header ----------------
+    st.sidebar.markdown(
+        f"<h4 style='text-align:center; font-weight:bold;'>Holder ID: {holder_id}</h4>",
+        unsafe_allow_html=True
     )
+    st.sidebar.markdown("---")
 
-    st.session_state["active_section"] = section
+    # ---------------- Completed Sections ----------------
+    try:
+        completed_sections = set(get_completed_sections(holder_id))
+        completed_sections = {s for s in completed_sections if s in SURVEY_SECTIONS}
+    except Exception as e:
+        st.sidebar.error(f"Error fetching completed sections: {e}")
+        completed_sections = set()
 
-    # Stable section display
-    if section.startswith("Section 1"):
-        holder_information_form(holder_id)
-    elif section.startswith("Section 2"):
-        holding_labour_form(holder_id)
+    # ---------------- Determine Next Section ----------------
+    state_key_next = f"{prefix}_next_section"
+    if state_key_next not in st.session_state:
+        for sec_id in sorted(SURVEY_SECTIONS.keys()):
+            if sec_id not in completed_sections:
+                st.session_state[state_key_next] = sec_id
+                break
+        else:
+            st.session_state[state_key_next] = max(SURVEY_SECTIONS.keys())
+    next_section = st.session_state[state_key_next]
+
+    # ---------------- Progress Bar ----------------
+    total_steps = len(SURVEY_SECTIONS)
+    progress_pct = len(completed_sections) / total_steps if total_steps else 0
+    st.sidebar.progress(progress_pct)
+
+    # ---------------- Section Buttons ----------------
+    for sec_id, sec in SURVEY_SECTIONS.items():
+        if sec_id in completed_sections:
+            label = f"{sec['label']} ✅"
+            color = "#28a745"
+        elif sec_id == next_section:
+            label = f"➡️ {sec['label']}"
+            color = "#0d6efd"
+        else:
+            label = sec['label']
+            color = "#6c757d"
+
+        btn_key = f"{prefix}_sec_btn_{sec_id}"
+        clicked = st.sidebar.button(label, key=btn_key)
+
+        # Button click updates current section and re-runs
+        if clicked:
+            st.session_state[state_key_next] = sec_id
+            st.experimental_rerun()
+
+        # Button CSS
+        st.sidebar.markdown(f"""
+            <style>
+            div.stButton > button[key="{btn_key}"] {{
+                background-color: {color};
+                color: white;
+            }}
+            </style>
+        """, unsafe_allow_html=True)
+
+    # ---------------- Render Current Section ----------------
+    current_section = SURVEY_SECTIONS.get(st.session_state[state_key_next])
+
+    if current_section:
+        try:
+            if current_section["needs_holder_id"]:
+                if holder_id:
+                    current_section["func"](holder_id=holder_id, prefix=prefix)
+                else:
+                    st.warning("No holder selected for this section.")
+            else:
+                current_section["func"]()
+        except Exception as e:
+            st.error(f"Error rendering section: {e}")
+    else:
+        st.warning("No section selected or section not found.")

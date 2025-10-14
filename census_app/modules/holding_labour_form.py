@@ -3,54 +3,59 @@ from sqlalchemy import text
 from census_app.db import engine
 
 # ---------------- Holder Labour Form ----------------
-def holding_labour_form(holder_id, prefix=""):
+def holding_labour_form(holder_id, prefix="holder"):
     """
-    Render the Holding Labour form for a given holder.
-    Automatically handles permanent/temporary workers and special questions.
-    The `prefix` ensures unique Streamlit keys for multiple holders or survey sessions.
+    Render Section 2: Holding Labour form for a given holder.
+    Handles permanent/temporary workers, non-Bahamian workers, work permits,
+    volunteers, and contracted services.
     """
     st.header("Section 2: Holding Labour")
 
-    # Define questions for the holding labour form
+    # Initialize session for form persistence
+    st.session_state.setdefault(f"{prefix}_responses", {})
+
+    # Define questions
     questions = [
-        {"question_no": 2, "text": "How many permanent workers including administrative staff were hired on the holding from Aug 1, 2024 to Jul 31, 2025 (excluding household)?", "type": "count"},
-        {"question_no": 3, "text": "How many temporary workers including administrative staff were hired on the holding from Aug 1, 2024 to Jul 31, 2025 (excluding household)?", "type": "count"},
-        {"question_no": 4, "text": "What was the number of non-Bahamian workers on the holding from Aug 1, 2024 to Jul 31, 2025?", "type": "count"},
+        {"question_no": 2, "text": "Permanent workers (excluding household) from Aug 1, 2024 to Jul 31, 2025", "type": "count"},
+        {"question_no": 3, "text": "Temporary workers (excluding household) from Aug 1, 2024 to Jul 31, 2025", "type": "count"},
+        {"question_no": 4, "text": "Number of non-Bahamian workers from Aug 1, 2024 to Jul 31, 2025", "type": "count"},
         {"question_no": 5, "text": "Did any of your workers have work permits?", "type": "option", "options": ["Yes", "No", "Not Applicable"]},
-        {"question_no": 6, "text": "Were there any volunteer workers on the holding (i.e. unpaid labourers)?", "type": "option", "options": ["Yes", "No", "Not Applicable"]},
-        {"question_no": 7, "text": "Did you use any agricultural contracted services (crop protection, pruning, composting, harvesting, animal services, irrigation, farm admin etc.) on the holding?", "type": "option", "options": ["Yes", "No", "Not Applicable"]},
+        {"question_no": 6, "text": "Any volunteer (unpaid) workers?", "type": "option", "options": ["Yes", "No", "Not Applicable"]},
+        {"question_no": 7, "text": "Use of agricultural contracted services?", "type": "option", "options": ["Yes", "No", "Not Applicable"]},
     ]
 
-    # Container for saving user responses
-    responses = {}
+    responses = st.session_state[f"{prefix}_responses"]
 
-    # Render each question
+    # Render questions
     for q in questions:
         q_no = q["question_no"]
-        key_prefix = f"{prefix}_holder_{holder_id}_q{q_no}"
+        key_base = f"{prefix}_{holder_id}_q{q_no}"
+
+        # Load previous session values if available
+        saved = responses.get(q_no, {})
 
         if q["type"] == "count":
-            # Render number inputs for male/female counts
-            male = st.number_input(f"Male - {q['text']}", min_value=0, value=0, key=f"{key_prefix}_male")
-            female = st.number_input(f"Female - {q['text']}", min_value=0, value=0, key=f"{key_prefix}_female")
+            male = st.number_input(f"Male - {q['text']}", min_value=0, value=saved.get("male", 0), key=f"{key_base}_male")
+            female = st.number_input(f"Female - {q['text']}", min_value=0, value=saved.get("female", 0), key=f"{key_base}_female")
             total = male + female
             st.write(f"Total: {total}")
             responses[q_no] = {"male": male, "female": female, "total": total, "option_response": None}
 
         elif q["type"] == "option":
-            # Render selectbox for options
-            option_response = st.selectbox(q["text"], options=q["options"], key=f"{key_prefix}_option")
+            option_response = st.selectbox(q["text"], options=q["options"], index=q["options"].index(saved.get("option_response", q["options"][0])), key=f"{key_base}_option")
             responses[q_no] = {"male": None, "female": None, "total": None, "option_response": option_response}
 
-    # ---------------- Save Responses to Database ----------------
-    if st.button("Save Section 2 Responses", key=f"{prefix}_save_button"):
+    # ---------------- Save to Database ----------------
+    if st.button("💾 Save Section 2 Responses", key=f"{prefix}_save_btn"):
         try:
             with engine.begin() as conn:
-                for q_no, r in responses.items():
+                for q in questions:
+                    r = responses[q["question_no"]]
                     conn.execute(
                         text("""
                             INSERT INTO holding_labour (
-                                holder_id, question_no, question_text, male_count, female_count, total_count, option_response
+                                holder_id, question_no, question_text,
+                                male_count, female_count, total_count, option_response
                             ) VALUES (
                                 :holder_id, :q_no, :question_text, :male, :female, :total, :option_response
                             )
@@ -62,7 +67,7 @@ def holding_labour_form(holder_id, prefix=""):
                         """),
                         {
                             "holder_id": holder_id,
-                            "q_no": q_no,
+                            "q_no": q["question_no"],
                             "question_text": q["text"],
                             "male": r["male"],
                             "female": r["female"],
@@ -70,6 +75,6 @@ def holding_labour_form(holder_id, prefix=""):
                             "option_response": r["option_response"]
                         }
                     )
-            st.success("Section 2 responses saved successfully!")
+            st.success("✅ Section 2 responses saved successfully!")
         except Exception as e:
             st.error(f"Error saving responses: {e}")
