@@ -1,46 +1,47 @@
 import os
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 
 # --------------------------------------------------------
-# Load environment variables
+# Environment Setup
 # --------------------------------------------------------
+os.environ["LOCAL_DEV"] = "1"  # force local mode
 load_dotenv()
 
-# Toggle: Set to False when deploying live
-LOCAL_DEV = False
+LOCAL_DEV = os.environ.get("LOCAL_DEV", "0") == "1"
 
 # --------------------------------------------------------
 # Database Configuration
 # --------------------------------------------------------
 if LOCAL_DEV:
-    # 🔹 Local PostgreSQL
-    DB_USER = os.getenv("LOCAL_DB_USER", "postgres")
+    DB_USER = os.getenv("LOCAL_DB_USER", "agri_user")
     DB_PASSWORD = os.getenv("LOCAL_DB_PASSWORD", "sherline10152")
     DB_HOST = os.getenv("LOCAL_DB_HOST", "127.0.0.1")
     DB_PORT = int(os.getenv("LOCAL_DB_PORT", 5432))
     DB_NAME = os.getenv("LOCAL_DB_NAME", "agri_census")
     DB_SSLMODE = "disable"
-    DATABASE_URL = (
-        f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode={DB_SSLMODE}"
-    )
 else:
-    # 🔹 Production: Render PostgreSQL (Live)
-    DATABASE_URL = (
-        "postgresql+psycopg2://servey_census_user:"
-        "pA16sWRzYkKqhOLJoLiiHcHnaRu7q3oJ@"
-        "dpg-d3msd5s9c44c73ccd240-a/servey_census"
-    )
+    DB_USER = os.getenv("DB_USER")
+    DB_PASSWORD = os.getenv("DB_PASSWORD")
+    DB_HOST = os.getenv("DB_HOST")
+    DB_PORT = int(os.getenv("DB_PORT", 5432))
+    DB_NAME = os.getenv("DB_NAME")
+    DB_SSLMODE = "require"
+
+SQLALCHEMY_DATABASE_URI = (
+    f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode={DB_SSLMODE}"
+)
 
 # --------------------------------------------------------
 # SQLAlchemy Engine & Session
 # --------------------------------------------------------
-engine = create_engine(DATABASE_URL, echo=False, future=True)
-SessionLocal = sessionmaker(bind=engine)
+engine = create_engine(SQLALCHEMY_DATABASE_URI, echo=False, future=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+Base = declarative_base()
 
 # --------------------------------------------------------
-# Test Connection (safe to keep)
+# Test Connection (Optional)
 # --------------------------------------------------------
 def test_connection():
     try:
@@ -50,7 +51,6 @@ def test_connection():
     except Exception as e:
         print(f"❌ [DB] Connection failed: {e}")
 
-# Run connection test only when running locally
 if __name__ == "__main__":
     test_connection()
 

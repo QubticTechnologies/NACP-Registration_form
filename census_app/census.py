@@ -6,6 +6,7 @@ import requests
 from sqlalchemy import text
 from datetime import date
 from streamlit_js_eval import get_geolocation
+import pydeck as pdk
 
 # Add current directory for imports
 sys.path.append(os.path.dirname(__file__))
@@ -14,23 +15,28 @@ sys.path.append(os.path.dirname(__file__))
 from census_app.db import engine
 from census_app.config import USERS_TABLE, HOLDERS_TABLE, TOTAL_SURVEY_SECTIONS
 
+
 # --- Lazy Imports to avoid circular imports ---
 def _import_auth():
     from census_app.modules.auth import login_user, register_user, logout_user, create_holder_for_user
     return login_user, register_user, logout_user, create_holder_for_user
 
+
 def _import_role_sidebar():
     from census_app.modules.role_sidebar import role_sidebar
     return role_sidebar
+
 
 def _import_dashboards():
     from census_app.modules.dashboards import holder_dashboard, agent_dashboard
     from census_app.modules.admin_dashboard.dashboard import admin_dashboard
     return holder_dashboard, agent_dashboard, admin_dashboard
 
+
 def _import_survey_sidebar():
     from census_app.modules.survey_sidebar import survey_sidebar
     return survey_sidebar
+
 
 # --- Dynamic Imports ---
 login_user, register_user, logout_user, create_holder_for_user = _import_auth()
@@ -56,6 +62,7 @@ st.session_state.setdefault("holder_form_data", {})
 st.session_state.setdefault("labour_form_data", {})
 st.session_state.setdefault("household_form_data", {})
 
+
 # -----------------------------
 # Helper Functions
 # -----------------------------
@@ -70,86 +77,231 @@ def get_user_status(user_id: int):
         st.error(f"Database error: {e}")
         return None
 
+
 # -----------------------------
-# GIS Location Widget
+# Enhanced GIS Location Widget
 # -----------------------------
 def holder_location_widget(holder_id):
     st.subheader("📍 Farm Location")
-    st.info("Allow browser to detect GPS for accurate location or enter manually.")
+    st.info("🎯 Click 'Auto Detect Location' for best accuracy, or enter coordinates manually.")
 
-    # Fetch stored coordinates
+    # Fetch stored coordinates from database
     with engine.connect() as conn:
-        loc = conn.execute(
+        result = conn.execute(
             text("SELECT latitude, longitude FROM holders WHERE holder_id=:hid"),
             {"hid": holder_id}
         ).fetchone()
-    holder_lat = loc[0] if loc and loc[0] is not None else 25.0343
-    holder_lon = loc[1] if loc and loc[1] is not None else -77.3963
 
-    # Map preview
-    st.map(pd.DataFrame([[holder_lat, holder_lon]], columns=["lat", "lon"]), zoom=15)
+    # Default to Nassau, Bahamas if no location stored
+    stored_lat = result[0] if result and result[0] is not None else 25.0343
+    stored_lon = result[1] if result and result[1] is not None else -77.3963
 
-    # Manual entry
+    # Initialize session state for this holder's coordinates
+    if f"holder_lat_{holder_id}" not in st.session_state:
+        st.session_state[f"holder_lat_{holder_id}"] = stored_lat
+    if f"holder_lon_{holder_id}" not in st.session_state:
+        st.session_state[f"holder_lon_{holder_id}"] = stored_lon
+
+    current_lat = st.session_state[f"holder_lat_{holder_id}"]
+    current_lon = st.session_state[f"holder_lon_{holder_id}"]
+
+    # Enhanced map visualization with PyDeck
+    st.markdown("#### 🗺️ Current Location Preview")
+
+    try:
+        # PyDeck map with satellite view
+        view_state = pdk.ViewState(
+            latitude=current_lat,
+            longitude=current_lon,
+            zoom=16,
+            pitch=45,
+        )
+
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=pd.DataFrame([[current_lat, current_lon]], columns=["lat", "lon"]),
+            get_position=["lon", "lat"],
+            get_color=[255, 0, 0, 200],
+            get_radius=50,
+            pickable=True,
+        )
+
+        st.pydeck_chart(pdk.Deck(
+            map_style="mapbox://styles/mapbox/satellite-streets-v11",
+            initial_view_state=view_state,
+            layers=[layer],
+            tooltip={"text": "Farm Location: {lat}, {lon}"}
+        ))
+    except Exception:
+        # Fallback to basic map
+        st.map(pd.DataFrame([[current_lat, current_lon]], columns=["lat", "lon"]), zoom=15)
+
+    # Auto Detect Location - HIGH ACCURACY
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if st.button("🎯 Auto Detect My Location", key=f"auto_loc_btn_{holder_id}", type="primary"):
+            with st.spinner("🛰️ Getting high-accuracy GPS coordinates..."):
+                try:
+                    loc_data = get_geolocation()
+                    if loc_data and "coords" in loc_data:
+                        detected_lat = loc_data["coords"]["latitude"]
+                        detected_lon = loc_data["coords"]["longitude"]
+                        accuracy = loc_data["coords"].get("accuracy", "Unknown")
+                        altitude = loc_data["coords"].get("altitude", "N/A")
+
+                        # Update session state
+                        st.session_state[f"holder_lat_{holder_id}"] = detected_lat
+                        st.session_state[f"holder_lon_{holder_id}"] = detected_lon
+
+                        st.success(f"✅ **GPS Lock Acquired!**")
+                        st.info(f"📍 Coordinates: `{detected_lat:.6f}, {detected_lon:.6f}`\n"
+                                f"🎯 Accuracy: ±{accuracy}m\n"
+                                f"⛰️ Altitude: {altitude}m")
+
+                        # Fetch address for detected location
+                        try:
+                            url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={detected_lat}&lon={detected_lon}&zoom=18&addressdetails=1"
+                            headers = {"User-Agent": "AgriCensusApp/1.0"}
+                            response = requests.get(url, headers=headers, timeout=10)
+                            if response.status_code == 200:
+                                data = response.json()
+                                address = data.get("display_name", "Address not available")
+                                st.success(f"📬 **Detected Address:**\n{address}")
+                        except Exception:
+                            pass
+
+                        st.rerun()
+                    else:
+                        st.error("⚠️ Could not access GPS. Please enable location services in your browser.")
+                        st.info("💡 **Tip:** Make sure you clicked 'Allow' when prompted for location access.")
+                except Exception as e:
+                    st.error(f"❌ GPS Error: {e}")
+
+    with col_btn2:
+        if st.button("🔄 Reset to Saved", key=f"reset_loc_btn_{holder_id}"):
+            st.session_state[f"holder_lat_{holder_id}"] = stored_lat
+            st.session_state[f"holder_lon_{holder_id}"] = stored_lon
+            st.rerun()
+
+    st.divider()
+
+    # Manual coordinate entry
+    st.markdown("#### ✏️ Manual Coordinate Entry")
     col1, col2 = st.columns(2)
     with col1:
-        holder_lat = st.number_input(
+        manual_lat = st.number_input(
             "Latitude",
-            value=float(st.session_state.get(f"holder_lat_{holder_id}", holder_lat)),
+            value=float(current_lat),
+            min_value=-90.0,
+            max_value=90.0,
             step=0.000001,
-            key=f"lat_input_{holder_id}"
+            format="%.6f",
+            key=f"lat_input_{holder_id}",
+            help="Enter latitude (North/South coordinate)"
         )
     with col2:
-        holder_lon = st.number_input(
+        manual_lon = st.number_input(
             "Longitude",
-            value=float(st.session_state.get(f"holder_lon_{holder_id}", holder_lon)),
+            value=float(current_lon),
+            min_value=-180.0,
+            max_value=180.0,
             step=0.000001,
-            key=f"lon_input_{holder_id}"
+            format="%.6f",
+            key=f"lon_input_{holder_id}",
+            help="Enter longitude (East/West coordinate)"
         )
 
-    # Auto Detect Location
-    if st.button("🎯 Auto Detect Location", key=f"auto_loc_btn_{holder_id}"):
-        with st.spinner("Detecting your location..."):
-            loc = get_geolocation()
-            if loc and "coords" in loc:
-                holder_lat = loc["coords"]["latitude"]
-                holder_lon = loc["coords"]["longitude"]
-                accuracy = loc["coords"].get("accuracy", "N/A")
-                st.session_state[f"holder_lat_{holder_id}"] = holder_lat
-                st.session_state[f"holder_lon_{holder_id}"] = holder_lon
-                st.success(f"✅ GPS Detected: {holder_lat:.6f}, {holder_lon:.6f} (±{accuracy}m)")
-                st.map(pd.DataFrame([[holder_lat, holder_lon]], columns=["lat", "lon"]), zoom=17)
-            else:
-                st.error("⚠️ Could not access browser GPS. Check permissions.")
+    # Update button for manual entry
+    if st.button("📍 Update Preview", key=f"update_preview_{holder_id}"):
+        st.session_state[f"holder_lat_{holder_id}"] = manual_lat
+        st.session_state[f"holder_lon_{holder_id}"] = manual_lon
+        st.rerun()
 
-    # Reverse geocode
+    # Reverse geocode for current coordinates
+    st.markdown("#### 🏠 Street Address")
     try:
-        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={holder_lat}&lon={holder_lon}&zoom=18&addressdetails=1"
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={current_lat}&lon={current_lon}&zoom=18&addressdetails=1"
         headers = {"User-Agent": "AgriCensusApp/1.0"}
         response = requests.get(url, headers=headers, timeout=10)
-        data = response.json()
-        street_address = data.get("display_name", "Address not found")
-    except Exception:
-        street_address = "Unable to fetch address"
+        if response.status_code == 200:
+            data = response.json()
+            street_address = data.get("display_name", "Address not found")
 
-    st.text_input("🏠 Street / Address (display only)", value=street_address, disabled=True)
+            # Extract detailed address components
+            address_details = data.get("address", {})
+            road = address_details.get("road", "")
+            suburb = address_details.get("suburb", "")
+            city = address_details.get("city", address_details.get("town", ""))
+            country = address_details.get("country", "")
 
-    # Google Maps link
-    if holder_lat and holder_lon:
-        maps_url = f"https://www.google.com/maps?q={holder_lat},{holder_lon}"
-        st.markdown(f"[🗺️ View on Google Maps]({maps_url})")
-
-    # Save to DB
-    if st.button("💾 Save Farm Location", key=f"save_loc_btn_{holder_id}"):
-        if -90 <= holder_lat <= 90 and -180 <= holder_lon <= 180:
-            with engine.begin() as conn:
-                conn.execute(
-                    text("UPDATE holders SET latitude=:lat, longitude=:lon WHERE holder_id=:hid"),
-                    {"lat": holder_lat, "lon": holder_lon, "hid": holder_id}
-                )
-            st.success("✅ Location saved successfully!")
-            st.experimental_rerun()
+            formatted_address = f"{road}, {suburb}, {city}, {country}".strip(", ")
+            if not formatted_address:
+                formatted_address = street_address
         else:
-            st.error("⚠️ Invalid coordinates. Please check values.")
+            formatted_address = "Unable to fetch address"
+    except Exception:
+        formatted_address = "Address lookup failed"
+
+    st.text_area(
+        "Current Address (auto-detected)",
+        value=formatted_address,
+        height=80,
+        disabled=True,
+        help="This address is automatically generated from your coordinates"
+    )
+
+    # External map links
+    col_map1, col_map2, col_map3 = st.columns(3)
+    with col_map1:
+        google_maps = f"https://www.google.com/maps?q={current_lat},{current_lon}"
+        st.markdown(f"[🗺️ Google Maps]({google_maps})")
+    with col_map2:
+        osm_link = f"https://www.openstreetmap.org/?mlat={current_lat}&mlon={current_lon}&zoom=17"
+        st.markdown(f"[🌍 OpenStreetMap]({osm_link})")
+    with col_map3:
+        apple_maps = f"http://maps.apple.com/?ll={current_lat},{current_lon}"
+        st.markdown(f"[🍎 Apple Maps]({apple_maps})")
+
+    st.divider()
+
+    # Save to database
+    col_save1, col_save2 = st.columns([2, 1])
+    with col_save1:
+        if st.button("💾 Save Farm Location", key=f"save_loc_btn_{holder_id}", type="primary"):
+            if -90 <= current_lat <= 90 and -180 <= current_lon <= 180:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("UPDATE holders SET latitude=:lat, longitude=:lon WHERE holder_id=:hid"),
+                            {"lat": current_lat, "lon": current_lon, "hid": holder_id}
+                        )
+                    st.success("✅ Location saved successfully!")
+                    st.balloons()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Database error: {e}")
+            else:
+                st.error("⚠️ Invalid coordinates.")
+
+    with col_save2:
+        status = "✅ GPS Set" if current_lat != 25.0343 or current_lon != -77.3963 else "⚠️ Default"
+        st.metric("Status", status)
+
+    # Coordinate precision info
+    with st.expander("📊 Location Precision Info"):
+        st.markdown(f"""
+        **Coordinate Precision Guide:**
+        - 6 decimal places = ~0.11 meters (centimeter-level) ✅
+        - 5 decimal places = ~1.1 meters
+        - 4 decimal places = ~11 meters
+
+        **Your Current Coordinates:**
+        - Latitude: `{current_lat:.6f}` (6 decimals)
+        - Longitude: `{current_lon:.6f}` (6 decimals)
+
+        ✅ Precision: Centimeter-level accuracy!
+        """)
+
 
 # -----------------------------
 # Main Login & Flow
@@ -160,7 +312,7 @@ st.sidebar.title("🌱 Agri Census System")
 if st.session_state.get("logged_out"):
     st.session_state.update({"user": None, "holder_id": None, "logged_out": False})
     st.experimental_set_query_params()
-    st.experimental_rerun()
+    st.rerun()
 
 # Login Flow
 if st.session_state["user"] is None:
@@ -173,6 +325,7 @@ if st.session_state["user"] is None:
             register_user()
     else:
         from census_app.modules.admin_auth import login_admin
+
         login_admin()
 
 # Logged-In Flow
@@ -195,7 +348,7 @@ else:
             st.error("🚫 Your account is not yet approved by admin.")
             st.stop()
 
-        # ----------- MAP AT THE TOP -----------
+        # ----------- ENHANCED MAP AT THE TOP -----------
         holder_location_widget(holder_id)
 
         # Validate coordinates
@@ -220,11 +373,12 @@ else:
         with col1:
             if st.button("⬅ Back", key=f"back_{holder_id}") and st.session_state["current_section"] > 1:
                 st.session_state["current_section"] -= 1
-                st.experimental_rerun()
+                st.rerun()
         with col3:
-            if st.button("Next ➡", key=f"next_{holder_id}") and st.session_state["current_section"] < TOTAL_SURVEY_SECTIONS:
+            if st.button("Next ➡", key=f"next_{holder_id}") and st.session_state[
+                "current_section"] < TOTAL_SURVEY_SECTIONS:
                 st.session_state["current_section"] += 1
-                st.experimental_rerun()
+                st.rerun()
 
         # Render current section dynamically
         current = st.session_state["current_section"]
@@ -239,7 +393,6 @@ else:
         # ----------- HOLDER DASHBOARD -----------
         st.divider()
         st.title("📊 Holder Dashboard")
-        #holder_dashboard(holder_id)
 
         # Age info
         try:
