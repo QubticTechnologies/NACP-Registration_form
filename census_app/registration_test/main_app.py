@@ -16,6 +16,8 @@ import math
 from datetime import datetime, timedelta
 import io
 from census_app.registration_test.db import connect_with_retries, engine
+import census_app.registration_test.db as db
+print("✅ Loaded DB module from:", db.__file__)
 
 
 
