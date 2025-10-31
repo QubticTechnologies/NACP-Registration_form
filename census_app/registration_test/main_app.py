@@ -15,10 +15,14 @@ from streamlit_folium import folium_static, st_folium
 import math
 from datetime import datetime, timedelta
 import io
-from census_app.registration_test.db import connect_with_retries, engine
+#from census_app.registration_test.db import connect_with_retries, engine
 import census_app.registration_test.db as db
 print("✅ Loaded DB module from:", db.__file__)
 
+import sys, os
+sys.path.append(os.path.join(os.path.dirname(__file__), "census_app", "registration_test"))
+
+from db import connect_with_retries, engine
 
 
 # =============================
