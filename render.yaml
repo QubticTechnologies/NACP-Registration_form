@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: agri-census
+    name: nacp-registration
     env: python
     plan: free
     buildCommand: |
@@ -9,4 +9,5 @@ services:
       pyenv global 3.11.9
       pip install --upgrade pip
       pip install -r requirements.txt
-    startCommand: streamlit run admin_app.py
+    startCommand: streamlit run census_app/registration_test/main_app.py --server.port $PORT --server.address 0.0.0.0
+
