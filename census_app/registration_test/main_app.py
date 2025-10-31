@@ -1,5 +1,5 @@
 # main_app.py - NACP Bahamas Complete Application
-# Fully Updated Version with All Enhancements
+# Complete self-contained version with all features
 
 import os
 import streamlit as st
@@ -15,15 +15,6 @@ from streamlit_folium import folium_static, st_folium
 import math
 from datetime import datetime, timedelta
 import io
-#from census_app.registration_test.db import connect_with_retries, engine
-import census_app.registration_test.db as db
-print("✅ Loaded DB module from:", db.__file__)
-
-import sys, os
-sys.path.append(os.path.join(os.path.dirname(__file__), "census_app", "registration_test"))
-
-from db import connect_with_retries, engine
-
 
 # =============================
 # DATABASE CONNECTION WITH RENDER POSTGRESQL
@@ -36,34 +27,39 @@ def get_database_connection():
         "postgresql://postgres:postgres@localhost:5432/nacp_bahamas",
         "sqlite:///nacp_bahamas.db"
     ]
-
+    
     for connection_string in connection_strings:
         if connection_string:
             try:
                 if connection_string.startswith('postgres://'):
                     connection_string = connection_string.replace('postgres://', 'postgresql://', 1)
-
-                engine = create_engine(connection_string, pool_pre_ping=True)
-
+                
+                engine = create_engine(connection_string, pool_pre_ping=True, connect_args={
+                    'connect_timeout': 10,
+                    'keepalives': 1,
+                    'keepalives_idle': 30,
+                    'keepalives_interval': 10,
+                    'keepalives_count': 5
+                })
+                
                 with engine.connect() as conn:
                     conn.execute(text("SELECT 1"))
-
+                
                 db_type = "PostgreSQL" if "postgresql" in connection_string else "SQLite"
-
+                
                 if "render.com" in connection_string:
                     st.success("✅ Connected to Render PostgreSQL Database")
                 elif "localhost" in connection_string:
                     st.success("✅ Connected to Local PostgreSQL Database")
                 else:
                     st.success("✅ Connected to SQLite Database")
-
+                    
                 return engine, db_type
             except Exception as e:
                 continue
-
+    
     st.error("❌ All database connection attempts failed. Using in-memory storage.")
     return None, "memory"
-
 
 # Initialize database connection
 engine, db_type = get_database_connection()
@@ -72,7 +68,7 @@ engine, db_type = get_database_connection()
 # STREAMLIT PAGE CONFIG
 # =============================
 st.set_page_config(
-    page_title="NACP Bahamas",
+    page_title="NACP Bahamas", 
     layout="wide",
     page_icon="🌾",
     initial_sidebar_state="collapsed"
@@ -159,7 +155,6 @@ ISLAND_CENTERS = {
     "Rum Cay": (23.6853, -74.8419)
 }
 
-
 # =============================
 # UTILITY FUNCTIONS
 # =============================
@@ -179,7 +174,6 @@ def safe_convert_array_data(data):
             pass
     return [data] if data else []
 
-
 def format_array_for_display(data):
     """Format array data for display in the UI"""
     if not data:
@@ -188,7 +182,6 @@ def format_array_for_display(data):
     if array_data:
         return ", ".join(str(item) for item in array_data)
     return "None"
-
 
 def format_phone_number(phone_str):
     """Format phone number as (242) XXX-XXXX"""
@@ -204,7 +197,6 @@ def format_phone_number(phone_str):
     else:
         return digits
 
-
 def validate_phone_number(phone_str):
     """Validate Bahamian phone number format"""
     if not phone_str:
@@ -218,6 +210,10 @@ def validate_phone_number(phone_str):
         return True
     return False
 
+def validate_email(email):
+    """Validate email format"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
 
 def get_island_zoom_level(island):
     """Get appropriate zoom level for each island"""
@@ -230,13 +226,6 @@ def get_island_zoom_level(island):
     }
     return zoom_levels.get(island, 10)
 
-
-def validate_email(email):
-    """Validate email format"""
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(pattern, email) is not None
-
-
 # =============================
 # REVERSE GEOCODING FUNCTIONS
 # =============================
@@ -244,29 +233,28 @@ def get_address_from_coordinates(lat, lon):
     """Get street address from coordinates using OpenStreetMap Nominatim"""
     try:
         url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=18&addressdetails=1"
-
+        
         headers = {
             'User-Agent': 'NACP Bahamas Agricultural Census/1.0'
         }
-
+        
         response = requests.get(url, headers=headers, timeout=10)
         data = response.json()
-
+        
         if 'error' not in data:
             address = data.get('display_name', '')
             address_components = data.get('address', {})
-
+            
             # Build a formatted address for The Bahamas
             road = address_components.get('road', '')
             house_number = address_components.get('house_number', '')
             suburb = address_components.get('suburb', '')
             neighbourhood = address_components.get('neighbourhood', '')
-            city = address_components.get('city', '') or address_components.get('town', '') or address_components.get(
-                'village', '')
-
+            city = address_components.get('city', '') or address_components.get('town', '') or address_components.get('village', '')
+            
             # Create formatted address
             formatted_parts = []
-
+            
             if house_number:
                 formatted_parts.append(house_number)
             if road:
@@ -277,68 +265,65 @@ def get_address_from_coordinates(lat, lon):
                 formatted_parts.append(neighbourhood)
             if city:
                 formatted_parts.append(city)
-
+            
             if formatted_parts:
                 formatted_address = ", ".join(formatted_parts)
                 return formatted_address
             else:
                 return address
-
+            
         return f"Near {lat:.6f}, {lon:.6f}"
-
+        
     except Exception as e:
         return f"Near {lat:.6f}, {lon:.6f}"
-
 
 def auto_detect_and_fill_address():
     """Automatically detect and fill address when coordinates are set"""
     lat = st.session_state.get("latitude")
     lon = st.session_state.get("longitude")
-
+    
     if not lat or not lon:
         return False
-
+    
     try:
         address = get_address_from_coordinates(lat, lon)
-
+        
         if address and address != f"Near {lat:.6f}, {lon:.6f}":
             # Update the street address field in session state
             st.session_state.reg_street = address
             return True
         else:
             return False
-
+            
     except Exception as e:
         return False
-
 
 def auto_fill_address_from_coordinates():
     """Automatically fill address fields based on current coordinates"""
     lat = st.session_state.get("latitude")
     lon = st.session_state.get("longitude")
-
+    
     if not lat or not lon:
         st.warning("⚠️ No coordinates available. Please set your location first.")
         return False
-
+    
     try:
         with st.spinner("🔄 Detecting address from your location..."):
             address = get_address_from_coordinates(lat, lon)
-
+            
             if address and address != f"Near {lat:.6f}, {lon:.6f}":
                 # Update the street address field in session state
                 st.session_state.reg_street = address
-
+                
                 st.success(f"📍 **Address detected:** {address}")
                 return True
             else:
                 st.warning("⚠️ Could not detect specific address. Please enter manually.")
                 return False
-
+                
     except Exception as e:
         st.error("❌ Failed to detect address. Please enter manually.")
         return False
-
 
 # =============================
 # DATABASE INITIALIZATION
@@ -347,21 +332,29 @@ def initialize_database():
     """Initialize database tables if they don't exist"""
     if engine is None:
         return False
-
+        
     if st.session_state.get("database_initialized"):
         return True
-
+        
     try:
         with engine.begin() as conn:
             # First, check if the table exists
-            result = conn.execute(text("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'registration_form'
-                )
-            """))
-            table_exists = result.scalar()
-
+            if db_type == "PostgreSQL":
+                result = conn.execute(text("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'registration_form'
+                    )
+                """))
+                table_exists = result.scalar()
+            else:
+                # SQLite
+                result = conn.execute(text("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name='registration_form'
+                """))
+                table_exists = result.fetchone() is not None
+            
             if table_exists:
                 # Table exists, check if confirmed column exists
                 try:
@@ -372,57 +365,90 @@ def initialize_database():
                     st.info("✅ Added 'confirmed' column to existing table")
             else:
                 # Create new table with confirmed column
-                conn.execute(text("""
-                    CREATE TABLE registration_form (
-                        id SERIAL PRIMARY KEY,
-                        consent BOOLEAN NOT NULL,
-                        first_name VARCHAR(100) NOT NULL,
-                        last_name VARCHAR(100) NOT NULL,
-                        email VARCHAR(150) NOT NULL,
-                        telephone VARCHAR(20),
-                        cell VARCHAR(20) NOT NULL,
-                        communication_methods TEXT[],
-                        island VARCHAR(100) NOT NULL,
-                        settlement VARCHAR(100) NOT NULL,
-                        street_address TEXT NOT NULL,
-                        interview_methods TEXT[],
-                        available_days TEXT[],
-                        available_times TEXT[],
-                        latitude DECIMAL(10, 8),
-                        longitude DECIMAL(11, 8),
-                        gps_accuracy DECIMAL(10, 2),
-                        location_source VARCHAR(50),
-                        confirmed BOOLEAN DEFAULT FALSE,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """))
-
+                if db_type == "PostgreSQL":
+                    conn.execute(text("""
+                        CREATE TABLE registration_form (
+                            id SERIAL PRIMARY KEY,
+                            consent BOOLEAN NOT NULL,
+                            first_name VARCHAR(100) NOT NULL,
+                            last_name VARCHAR(100) NOT NULL,
+                            email VARCHAR(150) NOT NULL,
+                            telephone VARCHAR(20),
+                            cell VARCHAR(20) NOT NULL,
+                            communication_methods TEXT[],
+                            island VARCHAR(100) NOT NULL,
+                            settlement VARCHAR(100) NOT NULL,
+                            street_address TEXT NOT NULL,
+                            interview_methods TEXT[],
+                            available_days TEXT[],
+                            available_times TEXT[],
+                            latitude DECIMAL(10, 8),
+                            longitude DECIMAL(11, 8),
+                            gps_accuracy DECIMAL(10, 2),
+                            location_source VARCHAR(50),
+                            confirmed BOOLEAN DEFAULT FALSE,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                else:
+                    # SQLite
+                    conn.execute(text("""
+                        CREATE TABLE registration_form (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            consent BOOLEAN NOT NULL,
+                            first_name VARCHAR(100) NOT NULL,
+                            last_name VARCHAR(100) NOT NULL,
+                            email VARCHAR(150) NOT NULL,
+                            telephone VARCHAR(20),
+                            cell VARCHAR(20) NOT NULL,
+                            communication_methods TEXT,
+                            island VARCHAR(100) NOT NULL,
+                            settlement VARCHAR(100) NOT NULL,
+                            street_address TEXT NOT NULL,
+                            interview_methods TEXT,
+                            available_days TEXT,
+                            available_times TEXT,
+                            latitude DECIMAL(10, 8),
+                            longitude DECIMAL(11, 8),
+                            gps_accuracy DECIMAL(10, 2),
+                            location_source VARCHAR(50),
+                            confirmed BOOLEAN DEFAULT FALSE,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+        
         st.session_state.database_initialized = True
         st.success("✅ Database initialized successfully")
         return True
-
+        
     except Exception as e:
         st.error(f"❌ Database initialization error: {e}")
         return False
-
 
 def restore_tables():
     """Restore database tables (recreate if missing)"""
     if engine is None:
         st.error("❌ No database connection available")
         return False
-
+        
     try:
         with engine.begin() as conn:
             # Check if table exists
-            result = conn.execute(text("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'registration_form'
-                )
-            """))
-            table_exists = result.scalar()
-
+            if db_type == "PostgreSQL":
+                result = conn.execute(text("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'registration_form'
+                    )
+                """))
+                table_exists = result.scalar()
+            else:
+                result = conn.execute(text("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name='registration_form'
+                """))
+                table_exists = result.fetchone() is not None
+            
             if table_exists:
                 # Table exists, check if confirmed column exists
                 try:
@@ -434,45 +460,70 @@ def restore_tables():
                     st.success("✅ Added 'confirmed' column to existing table")
             else:
                 # Recreate table with confirmed column
-                conn.execute(text("""
-                    CREATE TABLE registration_form (
-                        id SERIAL PRIMARY KEY,
-                        consent BOOLEAN NOT NULL,
-                        first_name VARCHAR(100) NOT NULL,
-                        last_name VARCHAR(100) NOT NULL,
-                        email VARCHAR(150) NOT NULL,
-                        telephone VARCHAR(20),
-                        cell VARCHAR(20) NOT NULL,
-                        communication_methods TEXT[],
-                        island VARCHAR(100) NOT NULL,
-                        settlement VARCHAR(100) NOT NULL,
-                        street_address TEXT NOT NULL,
-                        interview_methods TEXT[],
-                        available_days TEXT[],
-                        available_times TEXT[],
-                        latitude DECIMAL(10, 8),
-                        longitude DECIMAL(11, 8),
-                        gps_accuracy DECIMAL(10, 2),
-                        location_source VARCHAR(50),
-                        confirmed BOOLEAN DEFAULT FALSE,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """))
+                if db_type == "PostgreSQL":
+                    conn.execute(text("""
+                        CREATE TABLE registration_form (
+                            id SERIAL PRIMARY KEY,
+                            consent BOOLEAN NOT NULL,
+                            first_name VARCHAR(100) NOT NULL,
+                            last_name VARCHAR(100) NOT NULL,
+                            email VARCHAR(150) NOT NULL,
+                            telephone VARCHAR(20),
+                            cell VARCHAR(20) NOT NULL,
+                            communication_methods TEXT[],
+                            island VARCHAR(100) NOT NULL,
+                            settlement VARCHAR(100) NOT NULL,
+                            street_address TEXT NOT NULL,
+                            interview_methods TEXT[],
+                            available_days TEXT[],
+                            available_times TEXT[],
+                            latitude DECIMAL(10, 8),
+                            longitude DECIMAL(11, 8),
+                            gps_accuracy DECIMAL(10, 2),
+                            location_source VARCHAR(50),
+                            confirmed BOOLEAN DEFAULT FALSE,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                else:
+                    conn.execute(text("""
+                        CREATE TABLE registration_form (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            consent BOOLEAN NOT NULL,
+                            first_name VARCHAR(100) NOT NULL,
+                            last_name VARCHAR(100) NOT NULL,
+                            email VARCHAR(150) NOT NULL,
+                            telephone VARCHAR(20),
+                            cell VARCHAR(20) NOT NULL,
+                            communication_methods TEXT,
+                            island VARCHAR(100) NOT NULL,
+                            settlement VARCHAR(100) NOT NULL,
+                            street_address TEXT NOT NULL,
+                            interview_methods TEXT,
+                            available_days TEXT,
+                            available_times TEXT,
+                            latitude DECIMAL(10, 8),
+                            longitude DECIMAL(11, 8),
+                            gps_accuracy DECIMAL(10, 2),
+                            location_source VARCHAR(50),
+                            confirmed BOOLEAN DEFAULT FALSE,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
                 st.success("✅ Table 'registration_form' restored successfully with confirmed column")
-
+            
             st.session_state.database_initialized = True
             return True
-
+            
     except Exception as e:
         st.error(f"❌ Table restoration error: {e}")
         return False
-
 
 def fix_database_schema():
     """Fix database schema by adding missing columns"""
     if engine is None:
         return False
-
+        
     try:
         with engine.begin() as conn:
             # Check if confirmed column exists
@@ -483,20 +534,19 @@ def fix_database_schema():
                 conn.execute(text("ALTER TABLE registration_form ADD COLUMN confirmed BOOLEAN DEFAULT FALSE"))
                 st.success("✅ Added missing 'confirmed' column to database")
                 return True
-
+            
             st.info("✅ Database schema is up to date")
             return True
-
+            
     except Exception as e:
         st.error(f"❌ Schema fix error: {e}")
         return False
-
 
 def check_database_schema():
     """Check and fix database schema on startup"""
     if engine is None:
         return False
-
+        
     try:
         with engine.begin() as conn:
             # Check if confirmed column exists
@@ -506,16 +556,13 @@ def check_database_schema():
         # Column doesn't exist, try to fix it
         return fix_database_schema()
 
-
 # Initialize database on startup
-if st.session_state.get("page") == "landing" and engine is not None and not st.session_state.get(
-        "database_initialized"):
+if st.session_state.get("page") == "landing" and engine is not None and not st.session_state.get("database_initialized"):
     initialize_database()
 
 # Add schema check after database initialization
 if engine is not None and st.session_state.get("database_initialized"):
     check_database_schema()
-
 
 # =============================
 # DATA STORAGE FUNCTIONS
@@ -524,30 +571,71 @@ def save_registration_data(data):
     """Save registration data to database or session state as fallback"""
     if engine is not None:
         try:
-            sql = """
-                INSERT INTO registration_form (
-                    consent, first_name, last_name, email, telephone, cell,
-                    communication_methods, island, settlement, street_address,
-                    interview_methods, available_days, available_times, 
-                    latitude, longitude, gps_accuracy, location_source, confirmed
-                ) VALUES (
-                    :consent, :first_name, :last_name, :email, :telephone, :cell,
-                    :communication_methods, :island, :settlement, :street_address,
-                    :interview_methods, :available_days, :available_times, 
-                    :latitude, :longitude, :gps_accuracy, :location_source, :confirmed
-                ) RETURNING id
-            """
-
+            # Convert arrays to appropriate format for database
+            if db_type == "PostgreSQL":
+                sql = """
+                    INSERT INTO registration_form (
+                        consent, first_name, last_name, email, telephone, cell,
+                        communication_methods, island, settlement, street_address,
+                        interview_methods, available_days, available_times, 
+                        latitude, longitude, gps_accuracy, location_source, confirmed
+                    ) VALUES (
+                        :consent, :first_name, :last_name, :email, :telephone, :cell,
+                        :communication_methods, :island, :settlement, :street_address,
+                        :interview_methods, :available_days, :available_times, 
+                        :latitude, :longitude, :gps_accuracy, :location_source, :confirmed
+                    ) RETURNING id
+                """
+            else:
+                # SQLite - convert arrays to JSON strings
+                sql = """
+                    INSERT INTO registration_form (
+                        consent, first_name, last_name, email, telephone, cell,
+                        communication_methods, island, settlement, street_address,
+                        interview_methods, available_days, available_times, 
+                        latitude, longitude, gps_accuracy, location_source, confirmed
+                    ) VALUES (
+                        :consent, :first_name, :last_name, :email, :telephone, :cell,
+                        :communication_methods, :island, :settlement, :street_address,
+                        :interview_methods, :available_days, :available_times, 
+                        :latitude, :longitude, :gps_accuracy, :location_source, :confirmed
+                    )
+                """
+            
+            # Prepare data for insertion
+            insert_data = {
+                "consent": data["consent"],
+                "first_name": data["first_name"],
+                "last_name": data["last_name"],
+                "email": data["email"],
+                "telephone": data["telephone"],
+                "cell": data["cell"],
+                "communication_methods": data["communication_methods"] if db_type == "PostgreSQL" else json.dumps(data["communication_methods"]),
+                "island": data["island"],
+                "settlement": data["settlement"],
+                "street_address": data["street_address"],
+                "interview_methods": data["interview_methods"] if db_type == "PostgreSQL" else json.dumps(data["interview_methods"]),
+                "available_days": data["available_days"] if db_type == "PostgreSQL" else json.dumps(data["available_days"]),
+                "available_times": data["available_times"] if db_type == "PostgreSQL" else json.dumps(data["available_times"]),
+                "latitude": data["latitude"],
+                "longitude": data["longitude"],
+                "gps_accuracy": data["gps_accuracy"],
+                "location_source": data["location_source"],
+                "confirmed": False
+            }
+            
             with engine.begin() as conn:
-                result = conn.execute(text(sql), {
-                    **data,
-                    "confirmed": False  # Initially not confirmed
-                })
-                registration_id = result.scalar()
+                if db_type == "PostgreSQL":
+                    result = conn.execute(text(sql), insert_data)
+                    registration_id = result.scalar()
+                else:
+                    result = conn.execute(text(sql), insert_data)
+                    registration_id = result.lastrowid
+                
                 st.session_state.current_registration_id = registration_id
                 st.session_state.last_registration_id = registration_id
                 return True
-
+                
         except Exception as e:
             st.error(f"❌ Database save error: {e}")
             return False
@@ -555,7 +643,7 @@ def save_registration_data(data):
         registration_id = len(st.session_state.get("registration_data", {})) + 1
         if "registration_data" not in st.session_state:
             st.session_state.registration_data = {}
-
+        
         data['id'] = registration_id
         data['confirmed'] = False
         st.session_state.registration_data[registration_id] = data
@@ -563,7 +651,6 @@ def save_registration_data(data):
         st.session_state.last_registration_id = registration_id
         st.warning("⚠️ Using temporary storage (database unavailable)")
         return True
-
 
 def update_registration_location(registration_id, lat, lon, accuracy=None, source=None):
     """Update location data for a specific registration"""
@@ -574,12 +661,12 @@ def update_registration_location(registration_id, lat, lon, accuracy=None, sourc
                 "lon": lon,
                 "id": registration_id
             }
-
+            
             if accuracy is not None:
                 update_data["accuracy"] = accuracy
             if source is not None:
                 update_data["source"] = source
-
+            
             if accuracy is not None and source is not None:
                 sql = """
                     UPDATE registration_form 
@@ -593,11 +680,11 @@ def update_registration_location(registration_id, lat, lon, accuracy=None, sourc
                     SET latitude = :lat, longitude = :lon
                     WHERE id = :id
                 """
-
+            
             with engine.begin() as conn:
                 result = conn.execute(text(sql), update_data)
                 return result.rowcount > 0
-
+                
         except Exception as e:
             return False
     else:
@@ -609,11 +696,10 @@ def update_registration_location(registration_id, lat, lon, accuracy=None, sourc
             return True
         return False
 
-
 def get_latest_registration():
     """Get the latest registration from database or session state"""
     registration_id = st.session_state.get("current_registration_id")
-
+    
     if registration_id:
         if engine is not None:
             try:
@@ -622,19 +708,39 @@ def get_latest_registration():
                         text("SELECT * FROM registration_form WHERE id = :id"),
                         {"id": registration_id}
                     )
-                    return result.mappings().fetchone()
+                    row = result.mappings().fetchone()
+                    if row and db_type != "PostgreSQL":
+                        # Convert JSON strings back to arrays for SQLite
+                        row = dict(row)
+                        for field in ['communication_methods', 'interview_methods', 'available_days', 'available_times']:
+                            if row.get(field):
+                                try:
+                                    row[field] = json.loads(row[field])
+                                except:
+                                    row[field] = []
+                    return row
             except Exception as e:
                 return None
         else:
             return st.session_state.get("registration_data", {}).get(registration_id)
-
+    
     if engine is not None:
         try:
             with engine.begin() as conn:
                 result = conn.execute(
                     text("SELECT * FROM registration_form ORDER BY id DESC LIMIT 1")
                 )
-                return result.mappings().fetchone()
+                row = result.mappings().fetchone()
+                if row and db_type != "PostgreSQL":
+                    # Convert JSON strings back to arrays for SQLite
+                    row = dict(row)
+                    for field in ['communication_methods', 'interview_methods', 'available_days', 'available_times']:
+                        if row.get(field):
+                            try:
+                                row[field] = json.loads(row[field])
+                            except:
+                                row[field] = []
+                return row
         except Exception as e:
             return None
     else:
@@ -644,7 +750,6 @@ def get_latest_registration():
             return registration_data[latest_id]
         return None
 
-
 def get_all_registrations():
     """Get all registrations for admin selection"""
     if engine is not None:
@@ -653,13 +758,26 @@ def get_all_registrations():
                 result = conn.execute(
                     text("SELECT * FROM registration_form ORDER BY id DESC")
                 )
-                return result.mappings().fetchall()
+                rows = result.mappings().fetchall()
+                if db_type != "PostgreSQL":
+                    # Convert JSON strings back to arrays for SQLite
+                    processed_rows = []
+                    for row in rows:
+                        row_dict = dict(row)
+                        for field in ['communication_methods', 'interview_methods', 'available_days', 'available_times']:
+                            if row_dict.get(field):
+                                try:
+                                    row_dict[field] = json.loads(row_dict[field])
+                                except:
+                                    row_dict[field] = []
+                        processed_rows.append(row_dict)
+                    return processed_rows
+                return rows
         except Exception as e:
             st.error(f"Error loading registrations: {e}")
             return []
     else:
         return list(st.session_state.get("registration_data", {}).values())
-
 
 def confirm_registration(registration_id):
     """Mark a registration as confirmed"""
@@ -680,11 +798,44 @@ def confirm_registration(registration_id):
             return True
         return False
 
-
 def update_registration_data(registration_id, data):
     """Update registration data in database"""
     if engine is not None:
         try:
+            # Convert arrays to appropriate format
+            if db_type == "PostgreSQL":
+                update_data = {
+                    "first_name": data["first_name"],
+                    "last_name": data["last_name"],
+                    "email": data["email"],
+                    "telephone": data["telephone"],
+                    "cell": data["cell"],
+                    "communication_methods": data["communication_methods"],
+                    "island": data["island"],
+                    "settlement": data["settlement"],
+                    "street_address": data["street_address"],
+                    "interview_methods": data["interview_methods"],
+                    "available_days": data["available_days"],
+                    "available_times": data["available_times"],
+                    "id": registration_id
+                }
+            else:
+                update_data = {
+                    "first_name": data["first_name"],
+                    "last_name": data["last_name"],
+                    "email": data["email"],
+                    "telephone": data["telephone"],
+                    "cell": data["cell"],
+                    "communication_methods": json.dumps(data["communication_methods"]),
+                    "island": data["island"],
+                    "settlement": data["settlement"],
+                    "street_address": data["street_address"],
+                    "interview_methods": json.dumps(data["interview_methods"]),
+                    "available_days": json.dumps(data["available_days"]),
+                    "available_times": json.dumps(data["available_times"]),
+                    "id": registration_id
+                }
+            
             with engine.begin() as conn:
                 result = conn.execute(text("""
                     UPDATE registration_form 
@@ -694,7 +845,7 @@ def update_registration_data(registration_id, data):
                         interview_methods = :interview_methods, available_days = :available_days,
                         available_times = :available_times
                     WHERE id = :id
-                """), {**data, "id": registration_id})
+                """), update_data)
                 return result.rowcount > 0
         except Exception as e:
             st.error(f"Update error: {e}")
@@ -704,7 +855,6 @@ def update_registration_data(registration_id, data):
             st.session_state.registration_data[registration_id].update(data)
             return True
         return False
-
 
 # =============================
 # LOCATION FUNCTIONS
@@ -745,17 +895,16 @@ def get_enhanced_ip_location():
         st.warning("⚠️ Unable to auto-detect location. Please use the map or manual entry.")
         return False
 
-
 def get_safe_coordinates():
     """Get safe coordinate values with fallbacks"""
     default_lat = 25.0343
     default_lon = -77.3963
 
-    lat = (st.session_state.get("map_click_lat") or
-           st.session_state.get("latitude") or
+    lat = (st.session_state.get("map_click_lat") or 
+           st.session_state.get("latitude") or 
            default_lat)
-    lon = (st.session_state.get("map_click_lon") or
-           st.session_state.get("longitude") or
+    lon = (st.session_state.get("map_click_lon") or 
+           st.session_state.get("longitude") or 
            default_lon)
 
     try:
@@ -767,7 +916,6 @@ def get_safe_coordinates():
 
     return lat, lon
 
-
 def save_current_location_to_registration():
     """Save current location from session state to the current registration"""
     registration_id = st.session_state.get("current_registration_id")
@@ -775,11 +923,10 @@ def save_current_location_to_registration():
     lon = st.session_state.get("longitude")
     accuracy = st.session_state.get("gps_accuracy")
     source = st.session_state.get("location_source")
-
+    
     if registration_id and lat and lon:
         return update_registration_location(registration_id, lat, lon, accuracy, source)
     return False
-
 
 def handle_map_click(click_data):
     """Handle map click events to set coordinates"""
@@ -790,12 +937,11 @@ def handle_map_click(click_data):
         st.session_state.longitude = click_data['lng']
         st.session_state.location_source = "map_click"
         st.session_state.manual_coordinates = False
-
+        
         # AUTO-DETECT ADDRESS WHEN COORDINATES ARE SET
         auto_detect_and_fill_address()
         return True
     return False
-
 
 def show_interactive_map():
     """Display an interactive map for coordinate selection"""
@@ -841,28 +987,26 @@ def show_interactive_map():
 
     if map_data and map_data.get("last_clicked"):
         if handle_map_click(map_data["last_clicked"]):
-            st.success(
-                f"📍 **Location selected!** Coordinates: {map_data['last_clicked']['lat']:.6f}, {map_data['last_clicked']['lng']:.6f}")
+            st.success(f"📍 **Location selected!** Coordinates: {map_data['last_clicked']['lat']:.6f}, {map_data['last_clicked']['lng']:.6f}")
             st.session_state.map_counter += 1
             st.rerun()
 
     return map_data
 
-
 def show_coordinate_controls():
     """Show coordinate display and manual input controls"""
     st.markdown("#### 📍 Coordinate Controls")
-
+    
     lat, lon = get_safe_coordinates()
-
+    
     col1, col2, col3 = st.columns([2, 2, 1])
-
+    
     with col1:
         st.metric("Latitude", f"{lat:.6f}")
-
+    
     with col2:
         st.metric("Longitude", f"{lon:.6f}")
-
+    
     with col3:
         source = st.session_state.get("location_source", "unknown")
         source_display = {
@@ -876,25 +1020,25 @@ def show_coordinate_controls():
 
     with st.expander("✏️ Enter Coordinates Manually", expanded=False):
         st.markdown("**Enter precise coordinates manually:**")
-
+        
         col_lat, col_lon = st.columns(2)
         with col_lat:
             manual_lat = st.number_input(
-                "Latitude",
-                value=float(lat),
-                format="%.6f",
+                "Latitude", 
+                value=float(lat), 
+                format="%.6f", 
                 step=0.0001,
                 key="manual_lat_input"
             )
         with col_lon:
             manual_lon = st.number_input(
-                "Longitude",
-                value=float(lon),
-                format="%.6f",
+                "Longitude", 
+                value=float(lon), 
+                format="%.6f", 
                 step=0.0001,
                 key="manual_lon_input"
             )
-
+        
         if st.button("✅ Use Manual Coordinates", key="use_manual_coords"):
             st.session_state.latitude = manual_lat
             st.session_state.longitude = manual_lon
@@ -902,7 +1046,7 @@ def show_coordinate_controls():
             st.session_state.manual_coordinates = True
             st.session_state.map_click_lat = None
             st.session_state.map_click_lon = None
-
+            
             # AUTO-DETECT ADDRESS WHEN MANUAL COORDINATES ARE SET
             auto_detect_and_fill_address()
             st.success("✅ Manual coordinates set!")
@@ -920,7 +1064,6 @@ def show_coordinate_controls():
             st.success("✅ Coordinates cleared!")
             st.rerun()
 
-
 # =============================
 # RESET SESSION FUNCTION
 # =============================
@@ -928,22 +1071,21 @@ def reset_session():
     """Clear all session state data"""
     keys_to_keep = ["registration_data", "database_initialized"]
     keys_to_reset = [key for key in st.session_state.keys() if key not in keys_to_keep]
-
+    
     for key in keys_to_reset:
         st.session_state.pop(key, None)
-
+    
     st.success("✅ Session reset successfully!")
     st.rerun()
 
-
 # =============================
-# PAGE FUNCTIONS
+# PAGE FUNCTIONS - COMPLETE VERSION
 # =============================
 def landing_page():
     st.title("🌾 NACP - National Agricultural Census Pilot Project")
     st.markdown("""
     Welcome to the **National Agricultural Census Pilot Project (NACP)** for The Bahamas.
-
+    
     This initiative aims to collect accurate agricultural data to better serve our farming communities. 
     Your participation helps shape the future of agriculture in The Bahamas.
     """)
@@ -983,7 +1125,6 @@ def landing_page():
     with col_c:
         if st.button("🔄 **Reset Session**", use_container_width=True):
             reset_session()
-
 
 def registration_form():
     st.title("🌱 Registration Form")
@@ -1033,16 +1174,16 @@ def registration_form():
     with col1:
         # Store previous island selection to detect changes
         previous_island = st.session_state.get("current_island")
-
+        
         island_selected = st.selectbox(
             "Island *",
             list(ISLAND_SETTLEMENTS.keys()),
             key="reg_island"
         )
-
+        
         # Update current island in session state
         st.session_state.current_island = island_selected
-
+        
         # If island changed, update map view for later use
         if previous_island != island_selected:
             st.session_state.map_counter += 1  # Force map refresh for later pages
@@ -1055,13 +1196,13 @@ def registration_form():
         settlements = ISLAND_SETTLEMENTS.get(island_selected, [])
         # Add "Other" option to settlements
         settlement_options = settlements + ["Other"]
-
+        
         settlement_selected = st.selectbox(
             "Settlement/District *",
             settlement_options,
             key="reg_settlement"
         )
-
+        
         # Show manual input if "Other" is selected
         if settlement_selected == "Other":
             manual_settlement = st.text_input(
@@ -1081,17 +1222,17 @@ def registration_form():
         auto_detected_address = ""
         if st.session_state.get("latitude") and st.session_state.get("longitude"):
             auto_detected_address = get_address_from_coordinates(
-                st.session_state.latitude,
+                st.session_state.latitude, 
                 st.session_state.longitude
             )
-
+        
         street_address = st.text_input(
             "Street Address *",
             value=st.session_state.get("reg_street", auto_detected_address),
             key="reg_street",
             placeholder="e.g., 123 Main Street, Coral Harbour"
         )
-
+        
         # Show auto-detection status
         if st.session_state.get("latitude") and st.session_state.get("longitude"):
             if auto_detected_address and auto_detected_address != f"Near {st.session_state.latitude:.6f}, {st.session_state.longitude:.6f}":
@@ -1198,7 +1339,6 @@ def registration_form():
             else:
                 st.error("❌ Failed to save registration. Please try again.")
 
-
 def availability_form():
     # Security check: Prevent access if no current registration
     registration_id = st.session_state.get("current_registration_id")
@@ -1208,7 +1348,7 @@ def availability_form():
             st.session_state.page = "landing"
             st.rerun()
         return
-
+    
     # Additional check: If registration is already confirmed, redirect
     reg = get_latest_registration()
     if reg and reg.get('confirmed'):
@@ -1258,29 +1398,40 @@ def availability_form():
                 if engine is not None:
                     try:
                         with engine.begin() as conn:
-                            conn.execute(text("""
-                                UPDATE registration_form 
-                                SET available_days = :days, available_times = :times
-                                WHERE id = :id
-                            """), {
-                                "days": selected_days,
-                                "times": selected_times,
-                                "id": registration_id
-                            })
+                            # Update availability data
+                            if db_type == "PostgreSQL":
+                                conn.execute(text("""
+                                    UPDATE registration_form 
+                                    SET available_days = :days, available_times = :times
+                                    WHERE id = :id
+                                """), {
+                                    "days": selected_days,
+                                    "times": selected_times,
+                                    "id": registration_id
+                                })
+                            else:
+                                conn.execute(text("""
+                                    UPDATE registration_form 
+                                    SET available_days = :days, available_times = :times
+                                    WHERE id = :id
+                                """), {
+                                    "days": json.dumps(selected_days),
+                                    "times": json.dumps(selected_times),
+                                    "id": registration_id
+                                })
                     except Exception as e:
                         st.error(f"❌ Database update error: {e}")
                         return
-
+                
                 if registration_id in st.session_state.get("registration_data", {}):
                     st.session_state.registration_data[registration_id]['available_days'] = selected_days
                     st.session_state.registration_data[registration_id]['available_times'] = selected_times
-
+                
                 st.success("✅ Availability information saved successfully!")
                 st.session_state.page = "location_confirmation"
                 st.rerun()
             else:
                 st.error("❌ No registration found. Please start over.")
-
 
 def location_confirmation_page():
     # Security check: Prevent access if no current registration
@@ -1291,7 +1442,7 @@ def location_confirmation_page():
             st.session_state.page = "landing"
             st.rerun()
         return
-
+    
     # Additional check: If registration is already confirmed, redirect
     reg = get_latest_registration()
     if reg and reg.get('confirmed'):
@@ -1306,7 +1457,7 @@ def location_confirmation_page():
 
     st.markdown("""
     ### 🎯 Set Your Exact Location
-
+    
     **Choose your method:**
     - 🗺️ **Click on the map** below to select your exact location
     - 🌐 **Use IP** for approximate location  
@@ -1344,36 +1495,35 @@ def location_confirmation_page():
     # UPDATED: Auto-address detection section (now shows status instead of requiring button click)
     if st.session_state.get("latitude") and st.session_state.get("longitude"):
         st.markdown("### 🏠 Auto-Detected Address")
-
+        
         # Show current coordinates
         st.info(f"**Current Coordinates:** {st.session_state.latitude:.6f}, {st.session_state.longitude:.6f}")
-
+        
         # Show detected address status
         detected_address = get_address_from_coordinates(
-            st.session_state.latitude,
+            st.session_state.latitude, 
             st.session_state.longitude
         )
-
+        
         if detected_address and detected_address != f"Near {st.session_state.latitude:.6f}, {st.session_state.longitude:.6f}":
             st.success(f"**✅ Address Auto-Detected:** {detected_address}")
             st.caption("This address has been automatically filled in your registration.")
-
+            
             # Show the current value from session state (what will be used in registration)
             if st.session_state.get("reg_street"):
                 st.info(f"**Street Address Field:** {st.session_state.reg_street}")
         else:
-            st.warning(
-                "⚠️ Could not detect specific address from these coordinates. Please enter manually in the registration form.")
+            st.warning("⚠️ Could not detect specific address from these coordinates. Please enter manually in the registration form.")
 
     st.divider()
 
     col_back, col_save, col_continue = st.columns([1, 1, 1])
-
+    
     with col_back:
         if st.button("← Back"):
             st.session_state.page = "availability" if st.session_state.get("current_registration_id") else "landing"
             st.rerun()
-
+    
     with col_save:
         if st.session_state.get("latitude") and st.session_state.get("longitude"):
             if st.button("💾 Save Location", type="primary", use_container_width=True):
@@ -1383,7 +1533,7 @@ def location_confirmation_page():
                     st.error("❌ Failed to save location. Please try again.")
         else:
             st.button("💾 Save Location", disabled=True, use_container_width=True)
-
+    
     with col_continue:
         if st.button("✅ Continue", type="primary", use_container_width=True):
             if st.session_state.get("latitude") and st.session_state.get("longitude"):
@@ -1393,11 +1543,10 @@ def location_confirmation_page():
             else:
                 st.warning("⚠️ Please set your location first")
 
-
 def edit_registration_form(reg):
     """Allow candidates to edit their registration before final submission"""
     st.markdown("### ✏️ Edit Your Registration")
-
+    
     with st.form("edit_registration"):
         st.markdown("#### 👤 Personal Information")
         col1, col2 = st.columns(2)
@@ -1414,7 +1563,7 @@ def edit_registration_form(reg):
                                      value=cell_digits,
                                      key="edit_cell",
                                      placeholder="e.g., 2424567890 or 4567890")
-
+            
             telephone_digits = re.sub(r'\D', '', reg.get('telephone', '')) if reg.get('telephone') else ""
             telephone_raw = st.text_input("Alternate Number (Optional)",
                                           value=telephone_digits,
@@ -1426,18 +1575,17 @@ def edit_registration_form(reg):
         with col1:
             # Store previous island selection to detect changes
             previous_island = st.session_state.get("current_island")
-
+            
             island_selected = st.selectbox(
                 "Island *",
                 list(ISLAND_SETTLEMENTS.keys()),
-                index=list(ISLAND_SETTLEMENTS.keys()).index(reg.get('island', 'New Providence')) if reg.get(
-                    'island') in ISLAND_SETTLEMENTS else 0,
+                index=list(ISLAND_SETTLEMENTS.keys()).index(reg.get('island', 'New Providence')) if reg.get('island') in ISLAND_SETTLEMENTS else 0,
                 key="edit_island"
             )
-
+            
             # Update current island in session state
             st.session_state.current_island = island_selected
-
+            
             # If island changed, update map view
             if previous_island != island_selected:
                 st.session_state.map_counter += 1  # Force map refresh
@@ -1449,18 +1597,17 @@ def edit_registration_form(reg):
 
             settlements = ISLAND_SETTLEMENTS.get(island_selected, [])
             settlement_options = settlements + ["Other"]
-
+            
             current_settlement = reg.get('settlement', '')
-            settlement_index = settlement_options.index(
-                current_settlement) if current_settlement in settlement_options else 0
-
+            settlement_index = settlement_options.index(current_settlement) if current_settlement in settlement_options else 0
+            
             settlement_selected = st.selectbox(
                 "Settlement/District *",
                 settlement_options,
                 index=settlement_index,
                 key="edit_settlement"
             )
-
+            
             if settlement_selected == "Other":
                 manual_settlement = st.text_input(
                     "Enter Settlement Name *",
@@ -1600,45 +1747,44 @@ def edit_registration_form(reg):
             st.session_state.edit_mode = False
             st.rerun()
 
-
 def final_confirmation_page():
     # Security check: Prevent access if no current registration or already confirmed
     registration_id = st.session_state.get("current_registration_id")
-
+    
     # Get the registration data - try multiple ways
     reg = None
     if registration_id:
         reg = get_latest_registration()
-
+    
     # If we don't have reg but registration_confirmed is True, try to get the latest registration
     if not reg and st.session_state.get("registration_confirmed"):
         reg = get_latest_registration()
-
+    
     # Additional security: If registration is already confirmed, show thank you message
     if reg and reg.get('confirmed'):
         # SHOW PERSONALIZED THANK YOU MESSAGE FOR ALREADY CONFIRMED REGISTRATIONS
         user_name = f"{reg.get('first_name', '')} {reg.get('last_name', '')}".strip()
         user_island = reg.get('island', 'The Bahamas')
-
+        
         st.balloons()
         st.success("🎉 **Registration Already Confirmed and Submitted!**")
-
+        
         st.markdown(f"""
         ### 🙏 Thank You for Your Participation, {user_name}!
-
+        
         **Dear {user_name},**
-
+        
         Your registration from **{user_island}** has already been confirmed and submitted successfully.
-
+        
         On behalf of the **Ministry of Agriculture and Marine Resources** and the entire **National Agricultural Census Pilot (NACP)** team, 
         we extend our heartfelt gratitude for your participation in this important initiative.
-
+        
         ### Your Contribution Matters
-
+        
         Thank you for being an essential part of building a more resilient and prosperous agricultural future for The Bahamas. 
-
+        
         With sincere appreciation,
-
+        
         **The NACP Team**  
         *Ministry of Agriculture and Marine Resources*  
         *Government of The Bahamas*
@@ -1660,7 +1806,7 @@ def final_confirmation_page():
         return
 
     st.title("🎉 Registration Complete!")
-
+    
     if not reg:
         st.error("❌ No registration data found. Please start over.")
         if st.button("🏠 Back to Home"):
@@ -1678,22 +1824,22 @@ def final_confirmation_page():
     if not st.session_state.get("registration_confirmed"):
         # Show registration summary for review BEFORE confirmation
         st.success("✅ **All information saved! Please review your details below.**")
-
+        
         if reg.get('latitude') and reg.get('longitude'):
             source = reg.get('location_source', 'manual')
             source_display = {
                 'gps': '🎯 GPS',
-                'ip': '🌐 IP',
+                'ip': '🌐 IP', 
                 'map_click': '🗺️ Map',
                 'manual': '✏️ Manual',
                 'unknown': '❓ Unknown'
             }
             st.success(f"📍 **Location saved via {source_display.get(source, 'manual')}**")
-
+        
         st.markdown("### 📋 Registration Summary")
-
+        
         col1, col2 = st.columns(2)
-
+        
         with col1:
             st.markdown("#### 👤 Personal Information")
             st.write(f"**Name:** {reg.get('first_name', '')} {reg.get('last_name', '')}")
@@ -1701,36 +1847,36 @@ def final_confirmation_page():
             st.write(f"**Cell:** {reg.get('cell', '')}")
             if reg.get('telephone'):
                 st.write(f"**Alternate:** {reg.get('telephone', '')}")
-
+            
             st.markdown("#### 📍 Address")
             st.write(f"**Island:** {reg.get('island', '')}")
             st.write(f"**Settlement:** {reg.get('settlement', '')}")
             st.write(f"**Street:** {reg.get('street_address', '')}")
-
+        
         with col2:
             st.markdown("#### 💬 Communication Preferences")
             st.write(f"**Methods:** {format_array_for_display(reg.get('communication_methods'))}")
             st.write(f"**Interview:** {format_array_for_display(reg.get('interview_methods'))}")
-
+            
             st.markdown("#### 🕒 Availability")
             st.write(f"**Days:** {format_array_for_display(reg.get('available_days'))}")
             st.write(f"**Times:** {format_array_for_display(reg.get('available_times'))}")
-
+            
             if reg.get('latitude') and reg.get('longitude'):
                 st.markdown("#### 📍 Location")
                 st.write(f"**Coordinates:** {reg.get('latitude'):.6f}, {reg.get('longitude'):.6f}")
                 st.write(f"**Source:** {source_display.get(source, 'Unknown')}")
 
         st.divider()
-
+        
         # Edit and Confirm buttons
         col1, col2, col3 = st.columns(3)
-
+        
         with col1:
             if st.button("✏️ Edit Information", use_container_width=True):
                 st.session_state.edit_mode = True
                 st.rerun()
-
+        
         with col2:
             if st.button("✅ Confirm Submission", type="primary", use_container_width=True):
                 if confirm_registration(registration_id):
@@ -1740,51 +1886,51 @@ def final_confirmation_page():
                     st.rerun()
                 else:
                     st.error("❌ Failed to confirm registration. Please try again.")
-
+        
         with col3:
             if st.button("🗺️ View Location", use_container_width=True):
                 st.session_state.page = "location_confirmation"
                 st.rerun()
-
+    
     else:
         # THIS IS WHERE THE PERSONALIZED THANK YOU MESSAGE APPEARS AFTER CONFIRMATION
         user_name = f"{reg.get('first_name', '')} {reg.get('last_name', '')}".strip()
         user_island = reg.get('island', 'The Bahamas')
-
+        
         st.balloons()  # Add celebration effect
-
+        
         st.success("🎉 **Registration Confirmed and Submitted!**")
-
+        
         st.markdown(f"""
         ### 🙏 Thank You for Your Participation, {user_name}!
-
+        
         **Dear {user_name},**
-
+        
         On behalf of the **Ministry of Agriculture and Marine Resources** and the entire **National Agricultural Census Pilot (NACP)** team, 
         we extend our heartfelt gratitude for taking the time to complete your registration from **{user_island}**.
-
+        
         ### Your Contribution Matters
-
+        
         By participating in this important initiative, you are directly helping to:
-
+        
         🌱 **Shape agricultural policies** that support farmers across The Bahamas  
         📊 **Provide accurate data** for better resource allocation and planning  
         🏝️ **Strengthen food security** in our island nation  
         🤝 **Build stronger communities** through improved agricultural support
-
+        
         ### What Happens Next?
-
+        
         - Your information has been **securely stored** in our system
         - You will be contacted based on your preferred communication methods: **{format_array_for_display(reg.get('communication_methods'))}**
         - Our team will reach out during your preferred times: **{format_array_for_display(reg.get('available_days'))}** - **{format_array_for_display(reg.get('available_times'))}**
-
+        
         ### Your Voice Makes a Difference
-
+        
         Thank you for being an essential part of building a more resilient and prosperous agricultural future for The Bahamas. 
         Farmers like you are the foundation of our nation's food security and economic growth.
-
+        
         With sincere appreciation,
-
+        
         **The NACP Team**  
         *Ministry of Agriculture and Marine Resources*  
         *Government of The Bahamas*  
@@ -1792,7 +1938,7 @@ def final_confirmation_page():
         """)
 
         st.divider()
-
+        
         # Add a nice visual element
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1801,11 +1947,11 @@ def final_confirmation_page():
             st.metric("Location", f"📍 {user_island}")
         with col3:
             st.metric("Thank You", "🌟 Appreciated")
-
+        
         st.divider()
-
+        
         col1, col2 = st.columns(2)
-
+        
         with col1:
             if st.button("🏠 Return to Homepage", use_container_width=True, type="primary"):
                 # Now clear the registration data when going back to home
@@ -1814,28 +1960,27 @@ def final_confirmation_page():
                 st.session_state.edit_mode = False
                 st.session_state.current_registration_id = None
                 st.rerun()
-
+        
         with col2:
             if st.button("📝 Register Another Person", use_container_width=True):
                 reset_session()
                 st.session_state.page = "registration"
                 st.rerun()
 
-
 def admin_login():
     st.title("🔐 Admin Portal")
-
+    
     st.markdown("### Administrator Login")
-
+    
     col1, col2 = st.columns(2)
-
+    
     with col1:
         username = st.text_input("Username", key="admin_user")
     with col2:
         password = st.text_input("Password", type="password", key="admin_pass")
-
+    
     col1, col2, col3 = st.columns([2, 1, 2])
-
+    
     with col2:
         if st.button("🚪 Login", use_container_width=True, type="primary"):
             if username in ADMIN_USERS and ADMIN_USERS[username] == password:
@@ -1845,13 +1990,12 @@ def admin_login():
                 st.rerun()
             else:
                 st.error("❌ Invalid credentials")
-
+    
     st.divider()
-
+    
     if st.button("← Back to Home"):
         st.session_state.page = "landing"
         st.rerun()
-
 
 def admin_dashboard():
     if not st.session_state.get("admin_logged_in"):
@@ -1859,23 +2003,22 @@ def admin_dashboard():
         st.session_state.page = "admin_login"
         st.rerun()
         return
-
+    
     st.title("📊 Admin Dashboard")
-
+    
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Registrations", "🗺️ Map View", "⚙️ Database", "🗑️ Delete Management"])
-
+    
     with tab1:
         st.markdown("### 📋 All Registrations")
-
+        
         if engine is not None:
             try:
                 with engine.begin() as conn:
                     result = conn.execute(text("SELECT COUNT(*) FROM registration_form"))
                     count = result.scalar()
                     st.metric("Total Registrations", count)
-
-                    result_confirmed = conn.execute(
-                        text("SELECT COUNT(*) FROM registration_form WHERE confirmed = TRUE"))
+                    
+                    result_confirmed = conn.execute(text("SELECT COUNT(*) FROM registration_form WHERE confirmed = TRUE"))
                     confirmed_count = result_confirmed.scalar()
                     st.metric("Confirmed Registrations", confirmed_count)
             except Exception as e:
@@ -1884,30 +2027,13 @@ def admin_dashboard():
                 confirmed_count = 0
         else:
             count = len(st.session_state.get("registration_data", {}))
-            confirmed_count = len(
-                [r for r in st.session_state.get("registration_data", {}).values() if r.get('confirmed')])
+            confirmed_count = len([r for r in st.session_state.get("registration_data", {}).values() if r.get('confirmed')])
             st.metric("Total Registrations", count)
             st.metric("Confirmed Registrations", confirmed_count)
-
+        
         if count > 0:
-            if engine is not None:
-                try:
-                    with engine.begin() as conn:
-                        result = conn.execute(
-                            text("""
-                                SELECT id, first_name, last_name, email, cell, island, settlement, 
-                                       created_at, latitude, longitude, location_source, confirmed
-                                FROM registration_form 
-                                ORDER BY created_at DESC
-                            """)
-                        )
-                        registrations = result.mappings().fetchall()
-                except Exception as e:
-                    st.error(f"Error loading data: {e}")
-                    registrations = []
-            else:
-                registrations = list(st.session_state.get("registration_data", {}).values())
-
+            registrations = get_all_registrations()
+            
             # Table with delete checkboxes
             if registrations:
                 # Create a DataFrame for selection
@@ -1926,9 +2052,9 @@ def admin_dashboard():
                         "Created": reg.get('created_at', ''),
                         "Source": reg.get('location_source', 'unknown')
                     })
-
+                
                 df = pd.DataFrame(df_data)
-
+                
                 # Display the dataframe with selection
                 edited_df = st.data_editor(
                     df,
@@ -1944,10 +2070,10 @@ def admin_dashboard():
                     hide_index=True,
                     use_container_width=True
                 )
-
+                
                 # Get selected rows for deletion
                 selected_rows = edited_df[edited_df["Delete"] == True]
-
+                
                 if not selected_rows.empty:
                     st.warning(f"⚠️ {len(selected_rows)} registration(s) selected for deletion")
                     if st.button("🗑️ Delete Selected", type="secondary"):
@@ -1955,71 +2081,67 @@ def admin_dashboard():
                         for _, row in selected_rows.iterrows():
                             if delete_registration(row["ID"]):
                                 deleted_count += 1
-
+                        
                         if deleted_count > 0:
                             st.success(f"✅ Successfully deleted {deleted_count} registration(s)")
                             st.rerun()
                         else:
                             st.error("❌ Failed to delete registrations")
-
+                
                 # Show detailed view
                 st.markdown("### 👤 Registration Details")
                 selected_id = st.selectbox(
                     "Select registration to view details:",
                     options=[r.get('id') for r in registrations],
-                    format_func=lambda
-                        x: f"ID {x}: {next((f'{r.get('first_name')} {r.get('last_name')}' for r in registrations if r.get('id') == x), 'Unknown')}"
+                    format_func=lambda x: f"ID {x}: {next((f'{r.get('first_name')} {r.get('last_name')}' for r in registrations if r.get('id') == x), 'Unknown')}"
                 )
-
+                
                 if selected_id:
                     selected_reg = next((r for r in registrations if r.get('id') == selected_id), None)
                     if selected_reg:
                         col1, col2 = st.columns(2)
-
+                        
                         with col1:
                             st.markdown("#### Personal Information")
-                            st.write(
-                                f"**Name:** {selected_reg.get('first_name', '')} {selected_reg.get('last_name', '')}")
+                            st.write(f"**Name:** {selected_reg.get('first_name', '')} {selected_reg.get('last_name', '')}")
                             st.write(f"**Email:** {selected_reg.get('email', '')}")
                             st.write(f"**Cell:** {selected_reg.get('cell', '')}")
                             if selected_reg.get('telephone'):
                                 st.write(f"**Telephone:** {selected_reg.get('telephone', '')}")
-
+                            
                             st.markdown("#### Address")
                             st.write(f"**Island:** {selected_reg.get('island', '')}")
                             st.write(f"**Settlement:** {selected_reg.get('settlement', '')}")
                             st.write(f"**Street:** {selected_reg.get('street_address', '')}")
-
+                        
                         with col2:
                             st.markdown("#### Preferences")
-                            st.write(
-                                f"**Communication:** {format_array_for_display(selected_reg.get('communication_methods'))}")
-                            st.write(
-                                f"**Interview:** {format_array_for_display(selected_reg.get('interview_methods'))}")
+                            st.write(f"**Communication:** {format_array_for_display(selected_reg.get('communication_methods'))}")
+                            st.write(f"**Interview:** {format_array_for_display(selected_reg.get('interview_methods'))}")
                             st.write(f"**Days:** {format_array_for_display(selected_reg.get('available_days'))}")
                             st.write(f"**Times:** {format_array_for_display(selected_reg.get('available_times'))}")
-
+                            
                             st.markdown("#### Location Data")
                             if selected_reg.get('latitude') and selected_reg.get('longitude'):
-                                st.write(
-                                    f"**Coordinates:** {selected_reg.get('latitude'):.6f}, {selected_reg.get('longitude'):.6f}")
+                                st.write(f"**Coordinates:** {selected_reg.get('latitude'):.6f}, {selected_reg.get('longitude'):.6f}")
                                 st.write(f"**Source:** {selected_reg.get('location_source', 'unknown')}")
                                 if selected_reg.get('gps_accuracy'):
                                     st.write(f"**Accuracy:** {selected_reg.get('gps_accuracy')}m")
                             else:
                                 st.write("**Coordinates:** Not set")
-
+                            
                             st.write(f"**Created:** {selected_reg.get('created_at', 'Unknown')}")
                             st.write(f"**Confirmed:** {'✅ Yes' if selected_reg.get('confirmed') else '❌ No'}")
-
+            
             else:
                 st.info("📭 No registrations found")
         else:
             st.info("📭 No registrations in the system")
-
+    
     with tab2:
         st.markdown("### 🗺️ Registration Map View")
-
+        
+        located_registrations = []
         if engine is not None:
             try:
                 with engine.begin() as conn:
@@ -2034,72 +2156,71 @@ def admin_dashboard():
                     located_registrations = result.mappings().fetchall()
             except Exception as e:
                 st.error(f"Error loading location data: {e}")
-                located_registrations = []
         else:
             located_registrations = [
-                r for r in st.session_state.get("registration_data", {}).values()
+                r for r in st.session_state.get("registration_data", {}).values() 
                 if r.get('latitude') and r.get('longitude')
             ]
-
+        
         if located_registrations:
             # Create map centered on The Bahamas
             m = folium.Map(location=[25.0343, -77.3963], zoom_start=7, tiles='OpenStreetMap')
-
+            
             # Add markers for each registration
             for reg in located_registrations:
                 lat = reg.get('latitude')
                 lon = reg.get('longitude')
-
+                
                 if lat and lon:
                     # Different colors for confirmed vs unconfirmed
                     color = 'green' if reg.get('confirmed') else 'blue'
                     icon = 'ok-sign' if reg.get('confirmed') else 'info-sign'
-
+                    
                     popup_text = f"""
                     <b>{reg.get('first_name', '')} {reg.get('last_name', '')}</b><br>
                     <i>{reg.get('island', '')}, {reg.get('settlement', '')}</i><br>
                     {reg.get('street_address', '')}<br>
                     Status: {'✅ Confirmed' if reg.get('confirmed') else '❌ Pending'}
                     """
-
+                    
                     folium.Marker(
                         [lat, lon],
                         popup=folium.Popup(popup_text, max_width=300),
                         tooltip=f"{reg.get('first_name', '')} {reg.get('last_name', '')}",
                         icon=folium.Icon(color=color, icon=icon)
                     ).add_to(m)
-
+            
             # Display the map
             folium_static(m, width=800, height=600)
-
+            
             st.markdown("#### 📊 Location Statistics")
             col1, col2, col3 = st.columns(3)
-
+            
             with col1:
                 st.metric("Located Registrations", len(located_registrations))
-
+            
             with col2:
                 confirmed_located = len([r for r in located_registrations if r.get('confirmed')])
                 st.metric("Confirmed & Located", confirmed_located)
-
+            
             with col3:
                 sources = {}
                 for reg in located_registrations:
                     source = reg.get('location_source', 'unknown')
                     sources[source] = sources.get(source, 0) + 1
-
+                
                 if sources:
                     main_source = max(sources.items(), key=lambda x: x[1])
                     st.metric("Main Source", f"{main_source[0]} ({main_source[1]})")
-
+        
         else:
             st.info("🗺️ No registrations with location data available")
-
+    
     with tab3:
         st.markdown("### ⚙️ Database Management")
-
+        
         col1, col2 = st.columns(2)
-
+        
         with col1:
             st.markdown("#### Database Status")
             if engine is None:
@@ -2108,7 +2229,7 @@ def admin_dashboard():
             else:
                 st.success(f"✅ Connected to {db_type}")
                 st.write(f"**Type:** {db_type}")
-
+                
                 if db_type == "PostgreSQL":
                     if "render.com" in str(engine.url):
                         st.write("**Host:** Render PostgreSQL")
@@ -2116,47 +2237,45 @@ def admin_dashboard():
                         st.write("**Host:** Local PostgreSQL")
                 else:
                     st.write("**Host:** SQLite file")
-
+            
             # Database statistics
             if engine is not None:
                 try:
                     with engine.begin() as conn:
                         result = conn.execute(text("SELECT COUNT(*) FROM registration_form"))
                         total_count = result.scalar()
-
-                        result_confirmed = conn.execute(
-                            text("SELECT COUNT(*) FROM registration_form WHERE confirmed = TRUE"))
+                        
+                        result_confirmed = conn.execute(text("SELECT COUNT(*) FROM registration_form WHERE confirmed = TRUE"))
                         confirmed_count = result_confirmed.scalar()
-
-                        result_located = conn.execute(
-                            text("SELECT COUNT(*) FROM registration_form WHERE latitude IS NOT NULL"))
+                        
+                        result_located = conn.execute(text("SELECT COUNT(*) FROM registration_form WHERE latitude IS NOT NULL"))
                         located_count = result_located.scalar()
-
+                    
                     st.metric("Total Records", total_count)
                     st.metric("Confirmed", confirmed_count)
                     st.metric("With Location", located_count)
-
+                    
                 except Exception as e:
                     st.error(f"Error getting statistics: {e}")
-
+        
         with col2:
             st.markdown("#### Maintenance Actions")
-
+            
             if st.button("🔄 Initialize/Restore Tables", use_container_width=True):
                 if restore_tables():
                     st.success("✅ Tables restored successfully")
                 else:
                     st.error("❌ Failed to restore tables")
-
+            
             if st.button("🔧 Fix Schema", use_container_width=True):
                 if fix_database_schema():
                     st.success("✅ Schema fixed successfully")
                 else:
                     st.error("❌ Failed to fix schema")
-
+            
             if st.button("📤 Export Data", use_container_width=True):
                 export_data()
-
+            
             if st.button("🧹 Clear All Data", use_container_width=True, type="secondary"):
                 st.warning("⚠️ This will delete ALL registration data permanently!")
                 if st.checkbox("I understand this action cannot be undone"):
@@ -2165,17 +2284,17 @@ def admin_dashboard():
                         st.rerun()
                     else:
                         st.error("❌ Failed to clear data")
-
+    
     with tab4:
         st.markdown("### 🗑️ Delete Management")
-
+        
         st.warning("⚠️ **Danger Zone** - Use with caution!")
-
+        
         col1, col2 = st.columns(2)
-
+        
         with col1:
             st.markdown("#### Delete by Criteria")
-
+            
             delete_option = st.selectbox(
                 "Select deletion criteria:",
                 [
@@ -2186,14 +2305,13 @@ def admin_dashboard():
                     "All registrations"
                 ]
             )
-
+            
             if delete_option == "Registrations older than...":
                 days_old = st.number_input("Delete registrations older than (days):", min_value=1, value=7)
-
+            
             if st.button("🗑️ Delete by Criteria", type="secondary", use_container_width=True):
                 if delete_option != "Select...":
-                    count = delete_registrations_by_criteria(delete_option,
-                                                             days_old if 'days_old' in locals() else None)
+                    count = delete_registrations_by_criteria(delete_option, days_old if 'days_old' in locals() else None)
                     if count is not None:
                         if count > 0:
                             st.success(f"✅ Deleted {count} registration(s)")
@@ -2202,10 +2320,10 @@ def admin_dashboard():
                             st.info("ℹ️ No registrations matched the criteria")
                 else:
                     st.error("❌ Please select deletion criteria")
-
+        
         with col2:
             st.markdown("#### Quick Actions")
-
+            
             if st.button("🗑️ Delete All Unconfirmed", use_container_width=True, type="secondary"):
                 count = delete_registrations_by_criteria("Unconfirmed registrations only")
                 if count is not None and count > 0:
@@ -2213,7 +2331,7 @@ def admin_dashboard():
                     st.rerun()
                 else:
                     st.info("ℹ️ No unconfirmed registrations found")
-
+            
             if st.button("🗑️ Delete Without Location", use_container_width=True, type="secondary"):
                 count = delete_registrations_by_criteria("Registrations without location data")
                 if count is not None and count > 0:
@@ -2221,15 +2339,14 @@ def admin_dashboard():
                     st.rerun()
                 else:
                     st.info("ℹ️ No registrations without location data")
-
+    
     st.divider()
-
+    
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.admin_logged_in = False
         st.session_state.page = "landing"
         st.success("✅ Logged out successfully")
         st.rerun()
-
 
 def delete_registration(registration_id):
     """Delete a specific registration"""
@@ -2250,7 +2367,6 @@ def delete_registration(registration_id):
             return True
         return False
 
-
 def delete_registrations_by_criteria(criteria, days_old=None):
     """Delete registrations based on criteria"""
     if engine is not None:
@@ -2259,21 +2375,26 @@ def delete_registrations_by_criteria(criteria, days_old=None):
                 if criteria == "Unconfirmed registrations only":
                     result = conn.execute(text("DELETE FROM registration_form WHERE confirmed = FALSE"))
                 elif criteria == "Registrations without location data":
-                    result = conn.execute(
-                        text("DELETE FROM registration_form WHERE latitude IS NULL OR longitude IS NULL"))
+                    result = conn.execute(text("DELETE FROM registration_form WHERE latitude IS NULL OR longitude IS NULL"))
                 elif criteria == "Registrations older than...":
                     if days_old:
-                        result = conn.execute(
-                            text("DELETE FROM registration_form WHERE created_at < NOW() - INTERVAL ':days days'"),
-                            {"days": days_old}
-                        )
+                        if db_type == "PostgreSQL":
+                            result = conn.execute(
+                                text("DELETE FROM registration_form WHERE created_at < NOW() - INTERVAL ':days days'"),
+                                {"days": days_old}
+                            )
+                        else:
+                            result = conn.execute(
+                                text("DELETE FROM registration_form WHERE created_at < datetime('now', '-' || :days || ' days')"),
+                                {"days": days_old}
+                            )
                     else:
                         return None
                 elif criteria == "All registrations":
                     result = conn.execute(text("DELETE FROM registration_form"))
                 else:
                     return None
-
+                
                 return result.rowcount
         except Exception as e:
             st.error(f"Bulk delete error: {e}")
@@ -2282,22 +2403,21 @@ def delete_registrations_by_criteria(criteria, days_old=None):
         # For in-memory storage
         registration_data = st.session_state.get("registration_data", {})
         initial_count = len(registration_data)
-
+        
         if criteria == "Unconfirmed registrations only":
             st.session_state.registration_data = {
-                k: v for k, v in registration_data.items()
+                k: v for k, v in registration_data.items() 
                 if v.get('confirmed', False)
             }
         elif criteria == "Registrations without location data":
             st.session_state.registration_data = {
-                k: v for k, v in registration_data.items()
+                k: v for k, v in registration_data.items() 
                 if v.get('latitude') and v.get('longitude')
             }
         elif criteria == "All registrations":
             st.session_state.registration_data = {}
-
+        
         return initial_count - len(st.session_state.get("registration_data", {}))
-
 
 def clear_all_data():
     """Clear all registration data"""
@@ -2313,24 +2433,13 @@ def clear_all_data():
         st.session_state.registration_data = {}
         return True
 
-
 def export_data():
     """Export registration data to CSV"""
-    if engine is not None:
-        try:
-            with engine.begin() as conn:
-                result = conn.execute(text("SELECT * FROM registration_form"))
-                registrations = result.mappings().fetchall()
-        except Exception as e:
-            st.error(f"Export error: {e}")
-            return False
-    else:
-        registrations = list(st.session_state.get("registration_data", {}).values())
-
+    registrations = get_all_registrations()
     if not registrations:
         st.info("📭 No data to export")
         return False
-
+    
     # Convert to DataFrame
     df_data = []
     for reg in registrations:
@@ -2355,12 +2464,12 @@ def export_data():
             "Confirmed": reg.get('confirmed', False),
             "Created At": reg.get('created_at', '')
         })
-
+    
     df = pd.DataFrame(df_data)
-
+    
     # Generate CSV
     csv = df.to_csv(index=False)
-
+    
     # Create download button
     st.download_button(
         label="📥 Download CSV",
@@ -2369,9 +2478,8 @@ def export_data():
         mime="text/csv",
         use_container_width=True
     )
-
+    
     return True
-
 
 # =============================
 # MAIN APPLICATION
@@ -2380,7 +2488,7 @@ def main():
     # Initialize database if needed
     if engine is not None and not st.session_state.get("database_initialized"):
         initialize_database()
-
+    
     # Page routing
     pages = {
         "landing": landing_page,
@@ -2391,16 +2499,16 @@ def main():
         "admin_login": admin_login,
         "admin_dashboard": admin_dashboard
     }
-
+    
     current_page = st.session_state.get("page", "landing")
-
+    
     # Display the current page
     if current_page in pages:
         pages[current_page]()
     else:
         st.session_state.page = "landing"
         st.rerun()
-
+    
     # Footer
     st.divider()
     st.markdown(
@@ -2412,6 +2520,5 @@ def main():
         unsafe_allow_html=True
     )
 
-
 if __name__ == "__main__":
-     main()
+    main()
